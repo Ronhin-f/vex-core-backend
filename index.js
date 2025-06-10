@@ -19,7 +19,7 @@ const pool = new Pool({
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://vex-core-frontend.vercel.app'
+    'https://vex-core-frontend.vercel.app',
     'https://vex-core-landing.vercel.app'
   ],
   credentials: true,
