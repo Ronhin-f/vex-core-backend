@@ -5,16 +5,20 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
-const app = express();
-const PORT = process.env.PORT || 8080;
+// === DEBUG VARIABLES DE ENTORNO ===
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("JWT_SECRET está cargada?", process.env.JWT_SECRET ? 'SI' : 'NO');
+console.log("Valor JWT_SECRET:", process.env.JWT_SECRET);
 
-// 🚨 Sin defaults, explota si no hay JWT_SECRET
+// Bloquea si no está definida, para que el error sea claro
 if (!process.env.JWT_SECRET) {
   throw new Error("Falta la variable JWT_SECRET en el entorno de ejecución.");
 }
+
+const app = express();
+const PORT = process.env.PORT || 8080;
 const SECRET_KEY = process.env.JWT_SECRET;
 
-// Pool de Postgres (ajustado para Railway)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -30,7 +34,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Ruta raíz y healthcheck para debugging rápido
+// Ruta raíz y healthcheck
 app.get('/', (req, res) => {
   res.send('Vex Core API online');
 });
@@ -58,7 +62,6 @@ app.post('/registro', async (req, res) => {
   if (!email || !password || !nombre_organizacion) {
     return res.status(400).json({ message: 'Faltan campos requeridos' });
   }
-
   try {
     const existe = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
     if (existe.rows.length) return res.status(409).json({ message: 'Usuario ya existe' });
