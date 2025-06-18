@@ -7,7 +7,12 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const SECRET_KEY = process.env.JWT_SECRET || 'vex_core_secreta';
+
+// 🚨 Sin defaults, explota si no hay JWT_SECRET
+if (!process.env.JWT_SECRET) {
+  throw new Error("Falta la variable JWT_SECRET en el entorno de ejecución.");
+}
+const SECRET_KEY = process.env.JWT_SECRET;
 
 // Pool de Postgres (ajustado para Railway)
 const pool = new Pool({
@@ -15,7 +20,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-// CORS - Solo permití orígenes conocidos (agregá más si hace falta)
 app.use(cors({
   origin: [
     'http://localhost:3000',
