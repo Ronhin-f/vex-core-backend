@@ -5,12 +5,10 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
-// === DEBUG VARIABLES DE ENTORNO ===
 console.log("NODE_ENV:", process.env.NODE_ENV);
 console.log("JWT_SECRET está cargada?", process.env.JWT_SECRET ? 'SI' : 'NO');
 console.log("Valor JWT_SECRET:", process.env.JWT_SECRET);
 
-// Bloquea si no está definida, para que el error sea claro
 if (!process.env.JWT_SECRET) {
   throw new Error("Falta la variable JWT_SECRET en el entorno de ejecución.");
 }
@@ -34,15 +32,14 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Ruta raíz y healthcheck
 app.get('/', (req, res) => {
   res.send('Vex Core API online');
 });
+
 app.get('/health', (req, res) => {
   res.json({ status: 'Vex Core API OK', timestamp: new Date().toISOString() });
 });
 
-// Middleware de autenticación JWT
 function authenticateToken(req, res, next) {
   const token = req.headers["authorization"]?.split(" ")[1];
   if (!token) return res.status(401).json({ message: 'Token requerido' });
@@ -50,15 +47,15 @@ function authenticateToken(req, res, next) {
     const decoded = jwt.verify(token, SECRET_KEY);
     req.usuario_email = decoded.email;
     req.organizacion_id = decoded.organizacion_id;
+    req.rol = decoded.rol;
     next();
   } catch (err) {
     return res.status(403).json({ message: 'Token inválido' });
   }
 }
 
-// Registro de usuario y organización
 app.post('/registro', async (req, res) => {
-  const { email, password, nombre_organizacion, nombre_usuario } = req.body;
+  const { email, password, nombre_organizacion, nombre_usuario, nicho } = req.body;
   if (!email || !password || !nombre_organizacion) {
     return res.status(400).json({ message: 'Faltan campos requeridos' });
   }
@@ -66,14 +63,12 @@ app.post('/registro', async (req, res) => {
     const existe = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
     if (existe.rows.length) return res.status(409).json({ message: 'Usuario ya existe' });
 
-    // Crea la organización
     const org = await pool.query(
-      'INSERT INTO organizaciones (nombre) VALUES ($1) RETURNING id',
-      [nombre_organizacion]
+      'INSERT INTO organizaciones (nombre, email_admin, nicho) VALUES ($1, $2, $3) RETURNING id',
+      [nombre_organizacion, email, nicho || null]
     );
     const orgId = org.rows[0].id;
 
-    // Crea el usuario owner
     const hash = bcrypt.hashSync(password, 10);
     await pool.query(
       `INSERT INTO usuarios (email, password, rol, nombre, organizacion_id)
@@ -81,7 +76,7 @@ app.post('/registro', async (req, res) => {
       [email, hash, nombre_usuario || '', orgId]
     );
 
-    const token = jwt.sign({ email, organizacion_id: orgId }, SECRET_KEY, { expiresIn: '8h' });
+    const token = jwt.sign({ email, organizacion_id: orgId, rol: 'owner' }, SECRET_KEY, { expiresIn: '8h' });
     res.json({ message: 'Registrado correctamente', token });
   } catch (err) {
     console.error('[POST /registro] ', err);
@@ -89,7 +84,6 @@ app.post('/registro', async (req, res) => {
   }
 });
 
-// Login de usuario
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -112,7 +106,6 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Obtención de módulos habilitados
 app.get('/modulos', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -126,14 +119,10 @@ app.get('/modulos', authenticateToken, async (req, res) => {
   }
 });
 
-// Actualización/alta de módulos (solo owner)
 app.post('/modulos', authenticateToken, async (req, res) => {
   const { nombre, habilitado } = req.body;
   try {
-    const user = await pool.query(
-      'SELECT rol FROM usuarios WHERE email = $1',
-      [req.usuario_email]
-    );
+    const user = await pool.query('SELECT rol FROM usuarios WHERE email = $1', [req.usuario_email]);
     if (user.rows[0].rol !== 'owner') {
       return res.status(403).json({ message: 'No autorizado' });
     }
@@ -152,7 +141,6 @@ app.post('/modulos', authenticateToken, async (req, res) => {
   }
 });
 
-// Listado de usuarios por organización
 app.get('/usuarios', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -166,7 +154,95 @@ app.get('/usuarios', authenticateToken, async (req, res) => {
   }
 });
 
-// Siempre al final: listener del servidor
+app.post('/crear-usuario', authenticateToken, async (req, res) => {
+  const { email, password, nombre, rol } = req.body;
+  const rolesValidos = ['admin', 'user'];
+  if (!email || !password || !rolesValidos.includes(rol)) {
+    return res.status(400).json({ message: 'Datos inválidos o rol no permitido' });
+  }
+
+  try {
+    const creador = await pool.query('SELECT rol FROM usuarios WHERE email = $1', [req.usuario_email]);
+    if (creador.rows[0].rol !== 'owner') {
+      return res.status(403).json({ message: 'Solo el owner puede crear usuarios' });
+    }
+
+    const existe = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
+    if (existe.rows.length) return res.status(409).json({ message: 'Ese email ya está registrado' });
+
+    const hash = bcrypt.hashSync(password, 10);
+    await pool.query(
+      `INSERT INTO usuarios (email, password, rol, nombre, organizacion_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [email, hash, rol, nombre || '', req.organizacion_id]
+    );
+    res.json({ message: 'Usuario creado correctamente' });
+  } catch (err) {
+    console.error('[POST /crear-usuario] ', err);
+    res.status(500).json({ message: 'Error interno al crear usuario' });
+  }
+});
+
+// === SUPERADMIN ===
+app.get('/superadmin/organizaciones', authenticateToken, async (req, res) => {
+  const superadmins = ['admin@vex.com', 'melisa@vector.inc'];
+  if (!superadmins.includes(req.usuario_email)) {
+    return res.status(403).json({ message: 'Solo accesible por el superadmin' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT o.id AS id, o.nombre AS nombre, o.email_admin, o.nicho
+      FROM organizaciones o
+      ORDER BY o.id DESC
+    `);
+
+    const modulos = await pool.query(`SELECT organizacion_id, nombre, habilitado FROM modulos`);
+    const modulosPorOrg = {};
+    modulos.rows.forEach(({ organizacion_id, nombre, habilitado }) => {
+      if (!modulosPorOrg[organizacion_id]) modulosPorOrg[organizacion_id] = [];
+      modulosPorOrg[organizacion_id].push({ nombre, habilitado });
+    });
+
+    const data = result.rows.map(org => ({
+      ...org,
+      modulos: modulosPorOrg[org.id] || []
+    }));
+
+    res.json(data);
+  } catch (err) {
+    console.error('[GET /superadmin/organizaciones] ', err);
+    res.status(500).json({ message: 'Error al obtener organizaciones' });
+  }
+});
+
+app.post('/modulos/superadmin', authenticateToken, async (req, res) => {
+  const superadmins = ['admin@vex.com', 'melisa@vector.inc'];
+  if (!superadmins.includes(req.usuario_email)) {
+    return res.status(403).json({ message: 'Solo accesible por el superadmin' });
+  }
+
+  const { organizacion_id, nombre, habilitado } = req.body;
+  if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
+    return res.status(400).json({ message: 'Faltan datos requeridos' });
+  }
+
+  try {
+    await pool.query(`
+      INSERT INTO modulos (organizacion_id, nombre, habilitado)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (organizacion_id, nombre)
+      DO UPDATE SET habilitado = EXCLUDED.habilitado
+    `, [organizacion_id, nombre, habilitado]);
+
+    res.json({ message: `Módulo "${nombre}" actualizado para organización ${organizacion_id}` });
+  } catch (err) {
+    console.error('[POST /modulos/superadmin] ', err);
+    res.status(500).json({ message: 'Error al actualizar módulo para otra organización' });
+  }
+});
+
+// === START SERVER ===
 app.listen(PORT, () => {
   console.log(`🚀 Vex Core backend corriendo en http://localhost:${PORT}`);
 });
