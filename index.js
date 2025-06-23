@@ -53,7 +53,6 @@ function authenticateToken(req, res, next) {
     return res.status(403).json({ message: 'Token inválido' });
   }
 }
-
 app.post('/registro', async (req, res) => {
   const { email, password, nombre_organizacion, nombre_usuario, nicho } = req.body;
   if (!email || !password || !nombre_organizacion) {
@@ -119,6 +118,21 @@ app.get('/modulos', authenticateToken, async (req, res) => {
   }
 });
 
+app.get('/modulos/:nombre', authenticateToken, async (req, res) => {
+  const { nombre } = req.params;
+  try {
+    const resultado = await pool.query(
+      `SELECT habilitado FROM modulos WHERE organizacion_id = $1 AND nombre = $2`,
+      [req.organizacion_id, nombre]
+    );
+    const habilitado = resultado.rows[0]?.habilitado || false;
+    res.json({ nombre, habilitado });
+  } catch (err) {
+    console.error('[GET /modulos/:nombre] ', err);
+    res.status(500).json({ message: 'Error al verificar módulo' });
+  }
+});
+
 app.post('/modulos', authenticateToken, async (req, res) => {
   const { nombre, habilitado } = req.body;
   try {
@@ -140,7 +154,6 @@ app.post('/modulos', authenticateToken, async (req, res) => {
     res.status(500).json({ message: 'Error al actualizar módulo' });
   }
 });
-
 app.get('/usuarios', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -183,66 +196,21 @@ app.post('/crear-usuario', authenticateToken, async (req, res) => {
   }
 });
 
-// === SUPERADMIN ===
-app.get('/superadmin/organizaciones', authenticateToken, async (req, res) => {
-  const superadmins = ['admin@vex.com', 'melisa@vector.inc'];
-  if (!superadmins.includes(req.usuario_email)) {
-    return res.status(403).json({ message: 'Solo accesible por el superadmin' });
+app.post('/admin/migrar-estructura', authenticateToken, async (req, res) => {
+  if (req.usuario_email !== 'admin@vex.com') {
+    return res.status(403).json({ message: 'Solo el superadmin puede ejecutar migraciones' });
   }
 
   try {
-    const result = await pool.query(`
-      SELECT o.id AS id, o.nombre AS nombre, o.email_admin, o.nicho
-      FROM organizaciones o
-      ORDER BY o.id DESC
-    `);
-
-    const modulos = await pool.query(`SELECT organizacion_id, nombre, habilitado FROM modulos`);
-    const modulosPorOrg = {};
-    modulos.rows.forEach(({ organizacion_id, nombre, habilitado }) => {
-      if (!modulosPorOrg[organizacion_id]) modulosPorOrg[organizacion_id] = [];
-      modulosPorOrg[organizacion_id].push({ nombre, habilitado });
-    });
-
-    const data = result.rows.map(org => ({
-      ...org,
-      modulos: modulosPorOrg[org.id] || []
-    }));
-
-    res.json(data);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now()`);
+    await pool.query(`ALTER TABLE modulos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now()`);
+    res.json({ message: 'Migración ejecutada correctamente' });
   } catch (err) {
-    console.error('[GET /superadmin/organizaciones] ', err);
-    res.status(500).json({ message: 'Error al obtener organizaciones' });
+    console.error('[POST /admin/migrar-estructura]', err);
+    res.status(500).json({ message: 'Error al ejecutar migración' });
   }
 });
 
-app.post('/modulos/superadmin', authenticateToken, async (req, res) => {
-  const superadmins = ['admin@vex.com', 'melisa@vector.inc'];
-  if (!superadmins.includes(req.usuario_email)) {
-    return res.status(403).json({ message: 'Solo accesible por el superadmin' });
-  }
-
-  const { organizacion_id, nombre, habilitado } = req.body;
-  if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
-    return res.status(400).json({ message: 'Faltan datos requeridos' });
-  }
-
-  try {
-    await pool.query(`
-      INSERT INTO modulos (organizacion_id, nombre, habilitado)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (organizacion_id, nombre)
-      DO UPDATE SET habilitado = EXCLUDED.habilitado
-    `, [organizacion_id, nombre, habilitado]);
-
-    res.json({ message: `Módulo "${nombre}" actualizado para organización ${organizacion_id}` });
-  } catch (err) {
-    console.error('[POST /modulos/superadmin] ', err);
-    res.status(500).json({ message: 'Error al actualizar módulo para otra organización' });
-  }
-});
-
-// === START SERVER ===
 app.listen(PORT, () => {
   console.log(`🚀 Vex Core backend corriendo en http://localhost:${PORT}`);
 });
