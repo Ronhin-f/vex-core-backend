@@ -196,21 +196,6 @@ app.post('/crear-usuario', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/admin/migrar-estructura', authenticateToken, async (req, res) => {
-  if (req.usuario_email !== 'admin@vex.com') {
-    return res.status(403).json({ message: 'Solo el superadmin puede ejecutar migraciones' });
-  }
-
-  try {
-    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now()`);
-    await pool.query(`ALTER TABLE modulos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now()`);
-    res.json({ message: 'Migración ejecutada correctamente' });
-  } catch (err) {
-    console.error('[POST /admin/migrar-estructura]', err);
-    res.status(500).json({ message: 'Error al ejecutar migración' });
-  }
-});
-
 app.listen(PORT, () => {
   console.log(`🚀 Vex Core backend corriendo en http://localhost:${PORT}`);
 });
