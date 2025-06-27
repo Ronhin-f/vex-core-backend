@@ -53,6 +53,29 @@ function authenticateToken(req, res, next) {
     return res.status(403).json({ message: 'Token inválido' });
   }
 }
+
+// 🔒 Ruta protegida: Solo superadmins pueden ver todas las organizaciones
+app.get("/superadmin/organizaciones", authenticateToken, async (req, res) => {
+  if (!["admin@vex.com", "melisa@vector.inc"].includes(req.usuario_email)) {
+    return res.status(403).json({ error: "Sin autorización" });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT o.id, o.nombre, o.nicho, o.email_admin,
+             COALESCE(json_agg(json_build_object('nombre', m.nombre, 'habilitado', m.habilitado)) FILTER (WHERE m.nombre IS NOT NULL), '[]') as modulos
+      FROM organizaciones o
+      LEFT JOIN modulos m ON o.id = m.organizacion_id
+      GROUP BY o.id
+      ORDER BY o.id;
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("[GET /superadmin/organizaciones]", err);
+    res.status(500).json({ error: "Error al obtener organizaciones" });
+  }
+});
+
 app.post('/registro', async (req, res) => {
   const { email, password, nombre_organizacion, nombre_usuario, nicho } = req.body;
   if (!email || !password || !nombre_organizacion) {
@@ -193,6 +216,68 @@ app.post('/crear-usuario', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('[POST /crear-usuario] ', err);
     res.status(500).json({ message: 'Error interno al crear usuario' });
+  }
+});
+
+/* ----------- SUPERADMIN ----------- */
+
+// GET organizaciones con módulos
+app.get("/superadmin/organizaciones", authenticateToken, async (req, res) => {
+  const puedeVer = ["admin@vex.com", "melisa@vector.inc"];
+  if (!puedeVer.includes(req.usuario_email)) {
+    return res.status(403).json({ error: "Acceso denegado" });
+  }
+
+  try {
+    const orgs = await db.query("SELECT * FROM organizaciones");
+    const modulos = await db.query("SELECT * FROM modulos");
+
+    const data = orgs.rows.map((org) => {
+      const mods = modulos.rows.filter((m) => m.organizacion_id === org.id);
+      return {
+        ...org,
+        modulos: mods.map(({ nombre, habilitado }) => ({ nombre, habilitado })),
+      };
+    });
+
+    res.json(data);
+  } catch (err) {
+    console.error("[GET /superadmin/organizaciones]", err);
+    res.status(500).json({ error: "Error al obtener organizaciones" });
+  }
+});
+
+// POST para habilitar/deshabilitar módulos
+app.post("/modulos/superadmin", authenticateToken, async (req, res) => {
+  const puedeVer = ["admin@vex.com", "melisa@vector.inc"];
+  if (!puedeVer.includes(req.usuario_email)) {
+    return res.status(403).json({ error: "Acceso denegado" });
+  }
+
+  const { organizacion_id, nombre, habilitado } = req.body;
+
+  try {
+    const existe = await db.query(
+      "SELECT id FROM modulos WHERE organizacion_id = $1 AND nombre = $2",
+      [organizacion_id, nombre]
+    );
+
+    if (existe.rows.length > 0) {
+      await db.query(
+        "UPDATE modulos SET habilitado = $1 WHERE organizacion_id = $2 AND nombre = $3",
+        [habilitado, organizacion_id, nombre]
+      );
+    } else {
+      await db.query(
+        "INSERT INTO modulos (organizacion_id, nombre, habilitado) VALUES ($1, $2, $3)",
+        [organizacion_id, nombre, habilitado]
+      );
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("[POST /modulos/superadmin]", err);
+    res.status(500).json({ error: "Error al actualizar módulo" });
   }
 });
 
