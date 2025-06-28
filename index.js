@@ -156,27 +156,40 @@ app.get('/modulos/:nombre', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/modulos', authenticateToken, async (req, res) => {
-  const { nombre, habilitado } = req.body;
+// POST para habilitar/deshabilitar módulos
+app.post("/modulos/superadmin", authenticateToken, async (req, res) => {
+  const puedeVer = ["admin@vex.com", "melisa@vector.inc"];
+  if (!puedeVer.includes(req.usuario_email)) {
+    return res.status(403).json({ error: "Acceso denegado" });
+  }
+
+  const { organizacion_id, nombre, habilitado } = req.body;
+
   try {
-    const user = await pool.query('SELECT rol FROM usuarios WHERE email = $1', [req.usuario_email]);
-    if (user.rows[0].rol !== 'owner') {
-      return res.status(403).json({ message: 'No autorizado' });
+    const existe = await pool.query(
+      "SELECT id FROM modulos WHERE organizacion_id = $1 AND nombre = $2",
+      [organizacion_id, nombre]
+    );
+
+    if (existe.rows.length > 0) {
+      await pool.query(
+        "UPDATE modulos SET habilitado = $1 WHERE organizacion_id = $2 AND nombre = $3",
+        [habilitado, organizacion_id, nombre]
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO modulos (organizacion_id, nombre, habilitado) VALUES ($1, $2, $3)",
+        [organizacion_id, nombre, habilitado]
+      );
     }
 
-    await pool.query(
-      `INSERT INTO modulos (organizacion_id, nombre, habilitado)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (organizacion_id, nombre)
-       DO UPDATE SET habilitado = EXCLUDED.habilitado`,
-      [req.organizacion_id, nombre, habilitado]
-    );
-    res.json({ message: 'Módulo actualizado' });
+    res.sendStatus(200);
   } catch (err) {
-    console.error('[POST /modulos] ', err);
-    res.status(500).json({ message: 'Error al actualizar módulo' });
+    console.error("[POST /modulos/superadmin]", err);
+    res.status(500).json({ error: "Error al actualizar módulo" });
   }
 });
+
 app.get('/usuarios', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
