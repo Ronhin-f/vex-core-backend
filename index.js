@@ -26,7 +26,8 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'https://vex-core-frontend.vercel.app',
-    'https://vex-core-landing.vercel.app'
+    'https://vex-core-landing.vercel.app',
+    'https://vex-crm-frontend.vercel.app',
   ],
   credentials: true,
 }));
