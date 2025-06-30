@@ -57,7 +57,7 @@ function authenticateToken(req, res, next) {
 
 // 🔒 Ruta protegida: Solo superadmins pueden ver todas las organizaciones
 app.get("/superadmin/organizaciones", authenticateToken, async (req, res) => {
-  if (!["admin@vex.com", "melisa@vector.inc"].includes(req.usuario_email)) {
+  if (req.rol !== "superadmin") {
     return res.status(403).json({ error: "Sin autorización" });
   }
 
