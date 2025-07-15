@@ -122,7 +122,7 @@ app.post('/login', async (req, res) => {
       rol: user.rows[0].rol
     }, SECRET_KEY, { expiresIn: '8h' });
 
-    res.json({ token, email: user.rows[0].email, rol: user.rows[0].rol });
+    res.json({ token, email: user.rows[0].email, rol: user.rows[0].rol, organizacion_id: user.rows[0].organizacion_id });
   } catch (err) {
     console.error('[POST /login] ', err);
     res.status(500).json({ message: 'Error al iniciar sesión' });
