@@ -98,7 +98,8 @@ app.post('/registro', async (req, res) => {
        VALUES ($1, $2, 'owner', $3, $4)`,
       [email, hash, nombre_usuario || '', orgId]
     );
-
+    
+    console.log("🧪 Usuario completo:", user.rows[0]);
     const token = jwt.sign({ email, organizacion_id: orgId, rol: 'owner' }, SECRET_KEY, { expiresIn: '8h' });
     res.json({ message: 'Registrado correctamente', token });
   } catch (err) {
