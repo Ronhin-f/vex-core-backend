@@ -1,0 +1,49 @@
+exports.getUsuarios = async (req, res) => {
+  try {
+    const result = await req.db.query(
+      `SELECT email, rol, nombre FROM usuarios WHERE organizacion_id = $1 ORDER BY email`,
+      [req.organizacion_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[usuariosController/getUsuarios]', err);
+    }
+    res.status(500).json({ message: 'Error al obtener usuarios' });
+  }
+};
+
+exports.crearUsuario = async (req, res) => {
+  const { email, password, nombre, rol } = req.body;
+  const rolesValidos = ['admin', 'user'];
+
+  if (!email || !password || !rolesValidos.includes(rol)) {
+    return res.status(400).json({ message: 'Datos inválidos o rol no permitido' });
+  }
+
+  try {
+    const creador = await req.db.query('SELECT rol FROM usuarios WHERE email = $1', [req.usuario_email]);
+    if (creador.rows[0]?.rol !== 'owner') {
+      return res.status(403).json({ message: 'Solo el owner puede crear usuarios' });
+    }
+
+    const existe = await req.db.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
+    if (existe.rows.length) return res.status(409).json({ message: 'Ese email ya está registrado' });
+
+    const bcrypt = require('bcryptjs');
+    const hash = bcrypt.hashSync(password, 10);
+
+    await req.db.query(
+      `INSERT INTO usuarios (email, password, rol, nombre, organizacion_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [email, hash, rol, nombre || '', req.organizacion_id]
+    );
+
+    res.json({ message: 'Usuario creado correctamente' });
+  } catch (err) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[usuariosController/crearUsuario]', err);
+    }
+    res.status(500).json({ message: 'Error interno al crear usuario' });
+  }
+};
