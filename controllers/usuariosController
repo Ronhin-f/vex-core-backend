@@ -47,3 +47,20 @@ exports.crearUsuario = async (req, res) => {
     res.status(500).json({ message: 'Error interno al crear usuario' });
   }
 };
+
+exports.getUsuarioActual = async (req, res) => {
+  try {
+    const result = await req.db.query(
+      `SELECT email, nombre, rol, organizacion_id FROM usuarios WHERE email = $1 AND organizacion_id = $2`,
+      [req.usuario_email, req.organizacion_id]
+    );
+    const usuario = result.rows[0];
+    if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
+    res.json({ usuario });
+  } catch (err) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[usuariosController/getUsuarioActual]", err);
+    }
+    res.status(500).json({ error: "Error al obtener usuario actual" });
+  }
+};

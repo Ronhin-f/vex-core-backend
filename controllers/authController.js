@@ -33,6 +33,7 @@ exports.login = async (req, res) => {
       email: usuario.email,
       rol: usuario.rol,
       organizacion_id: usuario.organizacion_id,
+      nombre: usuario.nombre
     });
   } catch (error) {
     if (process.env.NODE_ENV !== 'production') {

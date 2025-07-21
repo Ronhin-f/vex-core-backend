@@ -9,4 +9,7 @@ router.get('/', authenticateToken, usuariosController.getUsuarios);
 // 👉 Crear nuevo usuario (solo owner)
 router.post('/crear-usuario', authenticateToken, usuariosController.crearUsuario);
 
+// Whoami: devuelve el usuario autenticado por JWT
+router.get('/me', authenticateToken, usuariosController.getUsuarioActual);
+
 module.exports = router;
