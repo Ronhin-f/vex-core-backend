@@ -1,10 +1,20 @@
+// controllers/modulosController.js
+
+// Devuelve los módulos habilitados para la organización autenticada
 exports.getModulos = async (req, res) => {
   try {
+    // Busca organización en el token JWT o como parámetro directo
+    const organizacion_id = req.user?.organizacion_id || req.organizacion_id;
+    if (!organizacion_id) {
+      return res.status(401).json({ message: "No autorizado: falta organización" });
+    }
+
+    // Consulta los módulos para la organización (si no hay, responde array vacío)
     const result = await req.db.query(
       `SELECT nombre, habilitado FROM modulos WHERE organizacion_id = $1`,
-      [req.organizacion_id]
+      [organizacion_id]
     );
-    res.json(result.rows);
+    res.json(Array.isArray(result.rows) ? result.rows : []);
   } catch (err) {
     if (process.env.NODE_ENV !== 'production') {
       console.error('[modulosController/getModulos]', err);
@@ -13,12 +23,17 @@ exports.getModulos = async (req, res) => {
   }
 };
 
+// Devuelve el estado de un módulo específico por nombre
 exports.getModuloByNombre = async (req, res) => {
   const { nombre } = req.params;
   try {
+    const organizacion_id = req.user?.organizacion_id || req.organizacion_id;
+    if (!organizacion_id) {
+      return res.status(401).json({ message: "No autorizado: falta organización" });
+    }
     const result = await req.db.query(
       `SELECT habilitado FROM modulos WHERE organizacion_id = $1 AND nombre = $2`,
-      [req.organizacion_id, nombre]
+      [organizacion_id, nombre]
     );
     const habilitado = result.rows[0]?.habilitado || false;
     res.json({ nombre, habilitado });
@@ -30,6 +45,7 @@ exports.getModuloByNombre = async (req, res) => {
   }
 };
 
+// Permite al superadmin activar/desactivar módulos
 exports.toggleModuloSuperadmin = async (req, res) => {
   const puedeVer = ['admin@vex.com', 'melisa@vector.inc'];
   if (!puedeVer.includes(req.usuario_email)) {
