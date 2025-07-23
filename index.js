@@ -32,15 +32,24 @@ app.use((req, res, next) => {
   next();
 });
 
+// --- CORS robusto y explícito ---
 app.use(cors({
   origin: [
     'http://localhost:3000',
+    'http://localhost:5173',
     'https://vex-core-frontend.vercel.app',
     'https://vex-core-landing.vercel.app',
     'https://vex-crm-frontend.vercel.app',
+    'https://vex-stock-frontend.vercel.app',      // <-- AGREGADO: Vex Stock real
   ],
   credentials: true,
+  methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+// Para debuggear rápido podés usar esto, pero NO para producción:
+// app.use(cors({ origin: '*', methods: ['GET','POST','DELETE','PUT','OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
+
 app.use(express.json());
 
 app.get('/', (req, res) => {
