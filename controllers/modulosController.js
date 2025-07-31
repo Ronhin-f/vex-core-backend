@@ -3,18 +3,22 @@
 // Devuelve los módulos habilitados para la organización autenticada
 exports.getModulos = async (req, res) => {
   try {
-    // Busca organización en el token JWT o como parámetro directo
     const organizacion_id = req.user?.organizacion_id || req.organizacion_id;
     if (!organizacion_id) {
       return res.status(401).json({ message: "No autorizado: falta organización" });
     }
 
-    // Consulta los módulos para la organización (si no hay, responde array vacío)
     const result = await req.db.query(
       `SELECT nombre, habilitado FROM modulos WHERE organizacion_id = $1`,
       [organizacion_id]
     );
-    res.json(Array.isArray(result.rows) ? result.rows : []);
+
+    const modulosPlano = {};
+    for (const row of result.rows) {
+      modulosPlano[row.nombre] = row.habilitado;
+    }
+
+    res.json(modulosPlano);
   } catch (err) {
     if (process.env.NODE_ENV !== 'production') {
       console.error('[modulosController/getModulos]', err);
