@@ -1,6 +1,6 @@
 // controllers/superadminController.js
 
-const pool = require('../db');
+const pool = require('../utils/db');
 
 // GET /superadmin/organizaciones — para uso exclusivo del superadmin
 exports.getOrganizaciones = async (req, res) => {
