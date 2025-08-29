@@ -1,11 +1,12 @@
+// routes/authRoutes.js
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 
-// 👉 Iniciar sesión
+// Iniciar sesión
 router.post('/login', authController.login);
 
-// 👉 Registrar usuario (requiere organizacion_id ya creado)
+// Registrar usuario (resuelve/crea organización según email/dom)
 router.post('/register', authController.register);
 
 module.exports = router;

@@ -1,15 +1,11 @@
+// routes/modulosRoutes.js
 const express = require('express');
 const router = express.Router();
-const modulosController = require('../controllers/modulosController');
 const { authenticateToken } = require('../middlewares/auth');
+const mod = require('../controllers/modulosController');
 
-// 👉 Obtener todos los módulos de la organización
-router.get('/', authenticateToken, modulosController.getModulos);
-
-// 👉 Verificar si un módulo está habilitado
-router.get('/:nombre', authenticateToken, modulosController.getModuloByNombre);
-
-// 👉 Habilitar/deshabilitar módulos como superadmin
-router.post('/superadmin', authenticateToken, modulosController.toggleModuloSuperadmin);
+router.get('/', authenticateToken, mod.getModulos);
+router.get('/:nombre', authenticateToken, mod.getModuloByNombre);
+router.post('/toggle', authenticateToken, mod.toggleModuloSuperadmin);
 
 module.exports = router;

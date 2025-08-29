@@ -1,11 +1,12 @@
 // controllers/modulosController.js
+const { isSuperadminEmail } = require('../config/superadmins');
 
 // Devuelve los módulos habilitados para la organización autenticada
 exports.getModulos = async (req, res) => {
   try {
-    const organizacion_id = req.user?.organizacion_id || req.organizacion_id;
+    const organizacion_id = req.organizacion_id || req.usuario?.organizacion_id;
     if (!organizacion_id) {
-      return res.status(401).json({ message: "No autorizado: falta organización" });
+      return res.status(401).json({ error: "No autorizado: falta organización" });
     }
 
     const result = await req.db.query(
@@ -14,26 +15,24 @@ exports.getModulos = async (req, res) => {
     );
 
     const modulosPlano = {};
-    for (const row of result.rows) {
-      modulosPlano[row.nombre] = row.habilitado;
-    }
+    for (const row of result.rows) modulosPlano[row.nombre] = row.habilitado;
 
     res.json(modulosPlano);
   } catch (err) {
     if (process.env.NODE_ENV !== 'production') {
       console.error('[modulosController/getModulos]', err);
     }
-    res.status(500).json({ message: 'Error al obtener módulos' });
+    res.status(500).json({ error: 'Error al obtener módulos' });
   }
 };
 
-// Devuelve el estado de un módulo específico por nombre
+// Estado de un módulo por nombre
 exports.getModuloByNombre = async (req, res) => {
   const { nombre } = req.params;
   try {
-    const organizacion_id = req.user?.organizacion_id || req.organizacion_id;
+    const organizacion_id = req.organizacion_id || req.usuario?.organizacion_id;
     if (!organizacion_id) {
-      return res.status(401).json({ message: "No autorizado: falta organización" });
+      return res.status(401).json({ error: "No autorizado: falta organización" });
     }
     const result = await req.db.query(
       `SELECT habilitado FROM modulos WHERE organizacion_id = $1 AND nombre = $2`,
@@ -45,19 +44,19 @@ exports.getModuloByNombre = async (req, res) => {
     if (process.env.NODE_ENV !== 'production') {
       console.error('[modulosController/getModuloByNombre]', err);
     }
-    res.status(500).json({ message: 'Error al verificar módulo' });
+    res.status(500).json({ error: 'Error al verificar módulo' });
   }
 };
 
-// Permite al superadmin activar/desactivar módulos
+// Activar/desactivar módulos (solo superadmin por whitelist o rol)
 exports.toggleModuloSuperadmin = async (req, res) => {
-  const puedeVer = ['admin@vex.com', 'melisa@vector.inc'];
-  if (!puedeVer.includes(req.usuario_email)) {
+  const email = req.usuario_email;
+  const esSuperadmin = req.usuario?.rol === 'superadmin' || isSuperadminEmail(email);
+  if (!esSuperadmin) {
     return res.status(403).json({ error: 'Acceso denegado' });
   }
 
-  const { organizacion_id, nombre, habilitado } = req.body;
-
+  const { organizacion_id, nombre, habilitado } = req.body || {};
   if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
     return res.status(400).json({ error: 'Faltan datos o tipo incorrecto' });
   }
@@ -68,7 +67,7 @@ exports.toggleModuloSuperadmin = async (req, res) => {
       [organizacion_id, nombre]
     );
 
-    if (existe.rows.length > 0) {
+    if (existe.rowCount > 0) {
       await req.db.query(
         'UPDATE modulos SET habilitado = $1 WHERE organizacion_id = $2 AND nombre = $3',
         [habilitado, organizacion_id, nombre]
@@ -80,7 +79,7 @@ exports.toggleModuloSuperadmin = async (req, res) => {
       );
     }
 
-    res.sendStatus(200);
+    res.json({ ok: true });
   } catch (err) {
     if (process.env.NODE_ENV !== 'production') {
       console.error('[modulosController/toggleModuloSuperadmin]', err);

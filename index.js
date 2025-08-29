@@ -1,23 +1,18 @@
 // index.js
-
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
 
 // Rutas
 const authRoutes = require('./routes/authRoutes');
 const modulosRoutes = require('./routes/modulosRoutes');
 const usuariosRoutes = require('./routes/usuariosRoutes');
 const organizacionesRoutes = require('./routes/organizacionesRoutes');
-const superadminRoutes = require('./routes/superadminRoutes'); // ✅ NUEVO
+const superadminRoutes = require('./routes/superadminRoutes');
 
-// Middleware
-const { authenticateToken } = require('./middlewares/auth');
-
-console.log("NODE_ENV:", process.env.NODE_ENV);
-console.log("JWT_SECRET está cargada?", process.env.JWT_SECRET ? 'SI' : 'NO');
-console.log("Valor JWT_SECRET:", process.env.JWT_SECRET);
+// DB centralizada
+const pool = require('./utils/db');
 
 if (!process.env.JWT_SECRET) {
   throw new Error("Falta la variable JWT_SECRET en el entorno de ejecución.");
@@ -26,14 +21,8 @@ if (!process.env.JWT_SECRET) {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Pool de conexión a PostgreSQL
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
-
 // Inyectar pool en req para acceso desde controllers
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   req.db = pool;
   next();
 });
@@ -56,20 +45,33 @@ app.use(cors({
 app.use(express.json());
 
 // Endpoints de prueba
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.send('Vex Core API online');
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'Vex Core API OK', timestamp: new Date().toISOString() });
 });
 
-// Rutas protegidas
+// Rutas
 app.use('/auth', authRoutes);
 app.use('/modulos', modulosRoutes);
 app.use('/usuarios', usuariosRoutes);
 app.use('/organizaciones', organizacionesRoutes);
-app.use('/superadmin', superadminRoutes); // ✅ REGISTRO DE LA NUEVA RUTA
+app.use('/superadmin', superadminRoutes);
+
+// 404
+app.use((req, res) => {
+  res.status(404).json({ error: 'Ruta no encontrada', path: req.path });
+});
+
+// Error handler
+app.use((err, _req, res, _next) => {
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('[UNHANDLED ERROR]', err);
+  }
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
 
 // Inicio del servidor
 app.listen(PORT, () => {

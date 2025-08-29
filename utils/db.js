@@ -1,8 +1,11 @@
+// utils/db.js
 const { Pool } = require('pg');
+
+const isProd = process.env.NODE_ENV === 'production';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // ⚠️ Solo para entornos con Heroku/Railway. Ajustar si usás algo más seguro
+  ...(isProd ? { ssl: { rejectUnauthorized: false } } : {})
 });
 
 module.exports = pool;
