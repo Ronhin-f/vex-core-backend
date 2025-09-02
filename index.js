@@ -21,13 +21,11 @@ if (!process.env.JWT_SECRET) {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Inyectar pool en req para acceso desde controllers
-app.use((req, _res, next) => {
-  req.db = pool;
-  next();
-});
+/* ================================
+   Middlewares base (orden crítico)
+   ================================ */
 
-// --- CORS robusto y explícito ---
+// CORS primero
 app.use(cors({
   origin: [
     'http://localhost:3000',
@@ -42,9 +40,17 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json());
+// Body parsers ANTES de usar req.body
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// Endpoints de prueba
+// Inyectar pool en req
+app.use((req, _res, next) => {
+  req.db = pool;
+  next();
+});
+
+/* ======= Endpoints simples ======= */
 app.get('/', (_req, res) => {
   res.send('Vex Core API online');
 });
@@ -53,19 +59,19 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'Vex Core API OK', timestamp: new Date().toISOString() });
 });
 
-// Rutas
+/* ============== Rutas ============== */
 app.use('/auth', authRoutes);
 app.use('/modulos', modulosRoutes);
 app.use('/usuarios', usuariosRoutes);
 app.use('/organizaciones', organizacionesRoutes);
 app.use('/superadmin', superadminRoutes);
 
-// 404
+/* ============== 404 =============== */
 app.use((req, res) => {
   res.status(404).json({ error: 'Ruta no encontrada', path: req.path });
 });
 
-// Error handler
+/* ======= Manejador de errores ====== */
 app.use((err, _req, res, _next) => {
   if (process.env.NODE_ENV !== 'production') {
     console.error('[UNHANDLED ERROR]', err);
@@ -73,7 +79,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Error interno del servidor' });
 });
 
-// Inicio del servidor
+/* ============ Arranque ============ */
 app.listen(PORT, () => {
   console.log(`🚀 Vex Core backend corriendo en http://localhost:${PORT}`);
 });

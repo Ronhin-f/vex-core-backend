@@ -15,10 +15,14 @@ function normEmail(s = '') {
   return String(s).trim().toLowerCase();
 }
 
+/* =========================
+   POST /auth/login
+   ========================= */
 exports.login = async (req, res) => {
   try {
     let { email, password, organizacion_id } = req.body || {};
     email = normEmail(email);
+
     if (!email || !password) {
       return res.status(400).json({ error: 'Email y contraseña son requeridos' });
     }
@@ -44,7 +48,7 @@ exports.login = async (req, res) => {
       return res.json({ token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
     }
 
-    // Sin organizacion_id: puede haber 1 o N usuarios con ese email en distintas orgs
+    // Sin organizacion_id: puede haber N orgs para ese email
     const all = await req.db.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     if (all.rowCount === 0) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -80,17 +84,28 @@ exports.login = async (req, res) => {
   }
 };
 
+/* =========================
+   POST /auth/register
+   ========================= */
 exports.register = async (req, res) => {
   const client = await req.db.connect();
   try {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[REGISTER] raw body:', req.body);
+    }
+
     let { email, password, nombre, rol } = req.body || {};
     let { organizacion_id, organizacion, nombre_organizacion } = req.body || {};
 
     email = normEmail(email);
     nombre = String(nombre || '').trim();
 
+    // Validaciones básicas → 400
     if (!email || !password || !nombre) {
-      return res.status(400).json({ error: 'Faltan datos obligatorios: nombre, email, password' });
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[REGISTER] faltan campos', { email: !!email, password: !!password, nombre: !!nombre });
+      }
+      return res.status(400).json({ error: 'Faltan datos: nombre, email y contraseña son obligatorios' });
     }
     if (password.length < 8) {
       return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
@@ -107,12 +122,17 @@ exports.register = async (req, res) => {
 
     let createdOrgNow = false;
 
-    // Resolver organización (prioridad: ID explícito → dominio reclamado → crear por dominio no público → org personal)
+    // Resolver organización:
+    // 1) Si mandan organizacion_id, usarlo (se valida al insertar usuario por FK).
+    // 2) Si no, ver si el dominio está reclamado (organizacion_dominios).
+    // 3) Si dominio no público → crear org y registrar dominio no verificado.
+    // 4) Si dominio público → crear org "Personal".
     if (!organizacion_id) {
       const domRow = await client.query(
         `SELECT organizacion_id FROM organizacion_dominios WHERE dominio=$1`,
         [dom]
       );
+
       if (domRow.rowCount > 0) {
         organizacion_id = domRow.rows[0].organizacion_id;
       } else if (!isPublicDomain) {
@@ -140,17 +160,17 @@ exports.register = async (req, res) => {
       }
     }
 
-    // Rol por defecto: owner si creó org; user si se unió.
+    // Rol por defecto
     if (!rol) {
       rol = createdOrgNow ? 'owner' : 'user';
     }
 
-    // Fuerza superadmin si el email está en whitelist
+    // Forzar superadmin si está whitelisteado
     if (isSuperadminEmail(email)) {
       rol = 'superadmin';
     }
 
-    // Duplicado dentro de la org
+    // Duplicado dentro de la org → 409
     const dupe = await client.query(
       'SELECT 1 FROM usuarios WHERE email=$1 AND organizacion_id=$2',
       [email, organizacion_id]
@@ -160,6 +180,7 @@ exports.register = async (req, res) => {
       return res.status(409).json({ error: 'El email ya existe en esa organización' });
     }
 
+    // Insert usuario
     const hashed = await bcrypt.hash(password, 10);
     const insert = `
       INSERT INTO usuarios (email, password, nombre, rol, organizacion_id)
@@ -178,6 +199,12 @@ exports.register = async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (process.env.NODE_ENV !== 'production') console.error('[authController/register] Error:', error);
+
+    // Cuando venga de Postgres con código de error específico
+    if (error?.code === '23505') {
+      // unique_violation
+      return res.status(409).json({ error: 'El email ya existe' });
+    }
     return res.status(500).json({ error: 'Error interno al registrar usuario' });
   } finally {
     client.release();
