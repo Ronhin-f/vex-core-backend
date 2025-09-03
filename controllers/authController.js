@@ -27,10 +27,9 @@ exports.login = async (req, res) => {
       return res.status(400).json({ error: 'Email y contraseña son requeridos' });
     }
 
-    // Alineación de superadmin (si corresponde)
     const emailEsSuperadmin = isSuperadminEmail(email);
 
-    // Priorizar organizacion_id si viene
+    // Si viene organizacion_id, priorizamos ese scope
     if (organizacion_id) {
       const r = await req.db.query(
         'SELECT * FROM usuarios WHERE email=$1 AND organizacion_id=$2',
@@ -48,14 +47,13 @@ exports.login = async (req, res) => {
       return res.json({ token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
     }
 
-    // Sin organizacion_id: puede haber N orgs para ese email
+    // Sin organizacion_id: puede haber más de una org con el mismo email
     const all = await req.db.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     if (all.rowCount === 0) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
     if (all.rowCount > 1) {
-      // Devolver opciones con nombres de ORGANIZACIONES (no del usuario)
       const { rows: opciones } = await req.db.query(
         `SELECT u.organizacion_id, o.nombre
          FROM usuarios u
@@ -114,24 +112,32 @@ exports.register = async (req, res) => {
     const dom = extractDomain(email);
     if (!dom) return res.status(400).json({ error: 'Email inválido' });
 
-    // ¿dominio público?
-    const pub = await req.db.query('SELECT 1 FROM dominios_publicos WHERE dominio=$1', [dom]);
-    const isPublicDomain = pub.rowCount > 0;
+    // ¿dominio público? (con fallback si la tabla no existiera)
+    let isPublicDomain = false;
+    try {
+      const pub = await req.db.query('SELECT 1 FROM dominios_publicos WHERE dominio=$1', [dom]);
+      isPublicDomain = pub.rowCount > 0;
+    } catch (e) {
+      // 42P01 = tabla inexistente; no rompemos el flujo
+      if (e?.code !== '42P01') throw e;
+      isPublicDomain = false;
+    }
 
     await client.query('BEGIN');
 
     let createdOrgNow = false;
 
-    // Resolver organización:
-    // 1) Si mandan organizacion_id, usarlo (se valida al insertar usuario por FK).
-    // 2) Si no, ver si el dominio está reclamado (organizacion_dominios).
-    // 3) Si dominio no público → crear org y registrar dominio no verificado.
-    // 4) Si dominio público → crear org "Personal".
+    // Resolver organización (con fallback si falta organizacion_dominios)
     if (!organizacion_id) {
-      const domRow = await client.query(
-        `SELECT organizacion_id FROM organizacion_dominios WHERE dominio=$1`,
-        [dom]
-      );
+      let domRow = { rowCount: 0, rows: [] };
+      try {
+        domRow = await client.query(
+          `SELECT organizacion_id FROM organizacion_dominios WHERE dominio=$1`,
+          [dom]
+        );
+      } catch (e) {
+        if (e?.code !== '42P01') throw e; // si es otra cosa, la propagamos
+      }
 
       if (domRow.rowCount > 0) {
         organizacion_id = domRow.rows[0].organizacion_id;
@@ -144,12 +150,17 @@ exports.register = async (req, res) => {
         organizacion_id = orgIns.rows[0].id;
         createdOrgNow = true;
 
+        // Intentar registrar el dominio (si la tabla existe)
         const token = crypto.randomBytes(12).toString('hex');
-        await client.query(
-          `INSERT INTO organizacion_dominios (organizacion_id, dominio, verificado, metodo_verificacion, token_verificacion)
-           VALUES ($1, $2, false, 'dns', $3)`,
-          [organizacion_id, dom, token]
-        );
+        try {
+          await client.query(
+            `INSERT INTO organizacion_dominios (organizacion_id, dominio, verificado, metodo_verificacion, token_verificacion)
+             VALUES ($1, $2, false, 'dns', $3)`,
+            [organizacion_id, dom, token]
+          );
+        } catch (e) {
+          if (e?.code !== '42P01') throw e;
+        }
       } else {
         const orgIns = await client.query(
           `INSERT INTO organizaciones (nombre, estado) VALUES ($1, 'active') RETURNING id`,
@@ -198,13 +209,19 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    if (process.env.NODE_ENV !== 'production') console.error('[authController/register] Error:', error);
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[authController/register] Error:', error?.code, error?.message);
+    }
 
-    // Cuando venga de Postgres con código de error específico
     if (error?.code === '23505') {
       // unique_violation
       return res.status(409).json({ error: 'El email ya existe' });
     }
+    if (error?.code === '23503') {
+      // foreign_key_violation (p.ej. organizacion_id inválido)
+      return res.status(400).json({ error: 'Organización inválida' });
+    }
+
     return res.status(500).json({ error: 'Error interno al registrar usuario' });
   } finally {
     client.release();
