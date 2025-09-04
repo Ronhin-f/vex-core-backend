@@ -19,12 +19,28 @@ function normEmail(s = '') {
 function looksLikeBcryptHash(s) {
   return typeof s === 'string' && /^\$2[aby]\$\d{2}\$/.test(s);
 }
-function dbg(...args) {
-  if (AUTH_DEBUG) console.log('[AUTH_DEBUG]', ...args);
-}
-function warn(...args) {
-  console.warn('[AUTH_WARN]', ...args);
-}
+function dbg(...args) { if (AUTH_DEBUG) console.log('[AUTH_DEBUG]', ...args); }
+function warn(...args) { console.warn('[AUTH_WARN]', ...args); }
+
+// ===== JWT middleware =====
+exports.requireAuth = (req, res, next) => {
+  try {
+    const h = req.headers.authorization || '';
+    const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+    if (!token) return res.status(401).json({ ok:false, error:'NO_TOKEN' });
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    return next();
+  } catch (e) {
+    if (AUTH_DEBUG) console.error('[AUTH_DEBUG] requireAuth error:', e?.message);
+    return res.status(401).json({ ok:false, error:'INVALID_TOKEN' });
+  }
+};
+
+// ===== Diagnóstico =====
+exports.me = (req, res) => {
+  return res.json({ ok:true, user: req.user });
+};
 
 /* =========================
    POST /auth/login
@@ -44,7 +60,7 @@ exports.login = async (req, res) => {
 
     const emailEsSuperadmin = isSuperadminEmail(email);
 
-    // ---- Rama con org explícita
+    // --- Rama con organización explícita
     if (organizacion_id) {
       const r = await req.db.query(
         'SELECT * FROM usuarios WHERE email=$1 AND organizacion_id=$2 LIMIT 1',
@@ -52,19 +68,15 @@ exports.login = async (req, res) => {
       );
       const u = r.rows[0];
       dbg('LOGIN with org -> found:', !!u);
-
       if (!u) return res.status(401).json({ error: 'Credenciales inválidas' });
 
       const hashed = looksLikeBcryptHash(u.password);
       dbg('LOGIN compare (with org) hashed?', hashed, 'len:', u.password ? String(u.password).length : 0);
 
       let ok = false;
-      try {
-        ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password);
-      } catch (e) {
-        warn('LOGIN compare error (with org):', e?.message);
-        ok = false;
-      }
+      try { ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password); }
+      catch (e) { warn('LOGIN compare error (with org):', e?.message); }
+
       if (!ok) {
         warn('LOGIN compare_failed (with org)', { email, method: hashed ? 'bcrypt' : 'plain-eq' });
         return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -73,12 +85,11 @@ exports.login = async (req, res) => {
       const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
       const payload = { email: u.email, rol: rolFinal, organizacion_id: u.organizacion_id, nombre: u.nombre };
       const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
-
       dbg('LOGIN success (with org)', { email, rolFinal, ms: Date.now() - t0 });
       return res.json({ token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
     }
 
-    // ---- Sin org explícita: puede haber varias
+    // --- Sin organización explícita
     const all = await req.db.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     dbg('LOGIN no-org rows:', all.rowCount);
 
@@ -104,17 +115,13 @@ exports.login = async (req, res) => {
     }
 
     const u = all.rows[0];
-
     const hashed = looksLikeBcryptHash(u.password);
     dbg('LOGIN compare hashed?', hashed, 'len:', u.password ? String(u.password).length : 0);
 
     let ok = false;
-    try {
-      ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password);
-    } catch (e) {
-      warn('LOGIN compare error:', e?.message);
-      ok = false;
-    }
+    try { ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password); }
+    catch (e) { warn('LOGIN compare error:', e?.message); }
+
     if (!ok) {
       warn('LOGIN compare_failed', { email, method: hashed ? 'bcrypt' : 'plain-eq' });
       return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -123,7 +130,6 @@ exports.login = async (req, res) => {
     const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
     const payload = { email: u.email, rol: rolFinal, organizacion_id: u.organizacion_id, nombre: u.nombre };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
-
     dbg('LOGIN success', { email, rolFinal, org: u.organizacion_id, super: emailEsSuperadmin, ms: Date.now() - t0 });
     return res.json({ token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
   } catch (error) {
@@ -164,13 +170,13 @@ exports.register = async (req, res) => {
     const dom = extractDomain(email);
     if (!dom) return res.status(400).json({ error: 'Email inválido' });
 
-    // ¿dominio público? (con fallback si la tabla no existiera)
+    // dominio público (si existe la tabla)
     let isPublicDomain = false;
     try {
       const pub = await req.db.query('SELECT 1 FROM dominios_publicos WHERE dominio=$1', [dom]);
       isPublicDomain = pub.rowCount > 0;
     } catch (e) {
-      if (e?.code !== '42P01') throw e; // tabla no existe
+      if (e?.code !== '42P01') throw e;
       isPublicDomain = false;
     }
 
@@ -178,7 +184,7 @@ exports.register = async (req, res) => {
 
     let createdOrgNow = false;
 
-    // Resolver organización (con fallback si falta organizacion_dominios)
+    // Resolver organización (si existe tabla de dominios)
     if (!organizacion_id) {
       let domRow = { rowCount: 0, rows: [] };
       try {
@@ -221,13 +227,9 @@ exports.register = async (req, res) => {
       }
     }
 
-    // Rol por defecto
     if (!rol) rol = createdOrgNow ? 'owner' : 'user';
-
-    // Forzar superadmin si está whitelisteado
     if (isSuperadminEmail(email)) rol = 'superadmin';
 
-    // Duplicado dentro de la org → 409
     const dupe = await client.query(
       'SELECT 1 FROM usuarios WHERE email=$1 AND organizacion_id=$2',
       [email, organizacion_id]
@@ -238,8 +240,7 @@ exports.register = async (req, res) => {
       return res.status(409).json({ error: 'El email ya existe en esa organización' });
     }
 
-    // Insert usuario (hash en la misma columna "password")
-    const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10); // guardamos hash en "password"
     const insert = `
       INSERT INTO usuarios (email, password, nombre, rol, organizacion_id)
       VALUES ($1,$2,$3,$4,$5)
@@ -262,12 +263,8 @@ exports.register = async (req, res) => {
       console.error('[authController/register] Error:', error?.code, error?.message);
     }
 
-    if (error?.code === '23505') {
-      return res.status(409).json({ error: 'El email ya existe' });
-    }
-    if (error?.code === '23503') {
-      return res.status(400).json({ error: 'Organización inválida' });
-    }
+    if (error?.code === '23505') return res.status(409).json({ error: 'El email ya existe' });
+    if (error?.code === '23503') return res.status(400).json({ error: 'Organización inválida' });
 
     return res.status(500).json({ error: 'Error interno al registrar usuario' });
   } finally {
