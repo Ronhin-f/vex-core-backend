@@ -7,6 +7,8 @@ const { isSuperadminEmail } = require('../config/superadmins');
 const { JWT_SECRET } = process.env;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no está definido en el entorno.");
 
+const AUTH_DEBUG = process.env.AUTH_DEBUG === '1';
+
 function extractDomain(email = '') {
   const m = String(email).toLowerCase().trim().match(/@([^@]+)$/);
   return m ? m[1] : null;
@@ -14,42 +16,74 @@ function extractDomain(email = '') {
 function normEmail(s = '') {
   return String(s).trim().toLowerCase();
 }
+function looksLikeBcryptHash(s) {
+  return typeof s === 'string' && /^\$2[aby]\$\d{2}\$/.test(s);
+}
+function dbg(...args) {
+  if (AUTH_DEBUG) console.log('[AUTH_DEBUG]', ...args);
+}
+function warn(...args) {
+  console.warn('[AUTH_WARN]', ...args);
+}
 
 /* =========================
    POST /auth/login
    ========================= */
 exports.login = async (req, res) => {
+  const t0 = Date.now();
   try {
     let { email, password, organizacion_id } = req.body || {};
     email = normEmail(email);
 
+    dbg('LOGIN >> email:', email, 'org:', organizacion_id || '(none)');
+
     if (!email || !password) {
+      warn('LOGIN missing credentials', { hasEmail: !!email, hasPassword: !!password });
       return res.status(400).json({ error: 'Email y contraseña son requeridos' });
     }
 
     const emailEsSuperadmin = isSuperadminEmail(email);
 
-    // Si viene organizacion_id, priorizamos ese scope
+    // ---- Rama con org explícita
     if (organizacion_id) {
       const r = await req.db.query(
-        'SELECT * FROM usuarios WHERE email=$1 AND organizacion_id=$2',
+        'SELECT * FROM usuarios WHERE email=$1 AND organizacion_id=$2 LIMIT 1',
         [email, organizacion_id]
       );
       const u = r.rows[0];
+      dbg('LOGIN with org -> found:', !!u);
+
       if (!u) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-      const ok = await bcrypt.compare(password, u.password);
-      if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
+      const hashed = looksLikeBcryptHash(u.password);
+      dbg('LOGIN compare (with org) hashed?', hashed, 'len:', u.password ? String(u.password).length : 0);
+
+      let ok = false;
+      try {
+        ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password);
+      } catch (e) {
+        warn('LOGIN compare error (with org):', e?.message);
+        ok = false;
+      }
+      if (!ok) {
+        warn('LOGIN compare_failed (with org)', { email, method: hashed ? 'bcrypt' : 'plain-eq' });
+        return res.status(401).json({ error: 'Credenciales inválidas' });
+      }
 
       const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
       const payload = { email: u.email, rol: rolFinal, organizacion_id: u.organizacion_id, nombre: u.nombre };
       const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
+
+      dbg('LOGIN success (with org)', { email, rolFinal, ms: Date.now() - t0 });
       return res.json({ token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
     }
 
-    // Sin organizacion_id: puede haber más de una org con el mismo email
+    // ---- Sin org explícita: puede haber varias
     const all = await req.db.query('SELECT * FROM usuarios WHERE email=$1', [email]);
+    dbg('LOGIN no-org rows:', all.rowCount);
+
     if (all.rowCount === 0) {
+      warn('LOGIN user_not_found', { email });
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
@@ -62,6 +96,7 @@ exports.login = async (req, res) => {
          ORDER BY o.nombre ASC`,
         [email]
       );
+      dbg('LOGIN multi-org -> opciones:', opciones.length);
       return res.status(409).json({
         error: 'El email pertenece a varias organizaciones. Seleccione una.',
         opciones
@@ -69,14 +104,30 @@ exports.login = async (req, res) => {
     }
 
     const u = all.rows[0];
-    const ok = await bcrypt.compare(password, u.password);
-    if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
+
+    const hashed = looksLikeBcryptHash(u.password);
+    dbg('LOGIN compare hashed?', hashed, 'len:', u.password ? String(u.password).length : 0);
+
+    let ok = false;
+    try {
+      ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password);
+    } catch (e) {
+      warn('LOGIN compare error:', e?.message);
+      ok = false;
+    }
+    if (!ok) {
+      warn('LOGIN compare_failed', { email, method: hashed ? 'bcrypt' : 'plain-eq' });
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
 
     const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
     const payload = { email: u.email, rol: rolFinal, organizacion_id: u.organizacion_id, nombre: u.nombre };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
+
+    dbg('LOGIN success', { email, rolFinal, org: u.organizacion_id, super: emailEsSuperadmin, ms: Date.now() - t0 });
     return res.json({ token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
   } catch (error) {
+    warn('LOGIN unhandled error:', error?.message);
     if (process.env.NODE_ENV !== 'production') console.error('[authController/login] Error:', error);
     res.status(500).json({ error: 'Error interno al iniciar sesión' });
   }
@@ -88,8 +139,12 @@ exports.login = async (req, res) => {
 exports.register = async (req, res) => {
   const client = await req.db.connect();
   try {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[REGISTER] raw body:', req.body);
+    if (AUTH_DEBUG) {
+      dbg('REGISTER body:', {
+        email: req.body?.email,
+        nombre: req.body?.nombre,
+        organizacion_id: req.body?.organizacion_id,
+      });
     }
 
     let { email, password, nombre, rol } = req.body || {};
@@ -98,11 +153,8 @@ exports.register = async (req, res) => {
     email = normEmail(email);
     nombre = String(nombre || '').trim();
 
-    // Validaciones básicas → 400
     if (!email || !password || !nombre) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[REGISTER] faltan campos', { email: !!email, password: !!password, nombre: !!nombre });
-      }
+      warn('REGISTER missing fields', { hasEmail: !!email, hasPassword: !!password, hasNombre: !!nombre });
       return res.status(400).json({ error: 'Faltan datos: nombre, email y contraseña son obligatorios' });
     }
     if (password.length < 8) {
@@ -118,8 +170,7 @@ exports.register = async (req, res) => {
       const pub = await req.db.query('SELECT 1 FROM dominios_publicos WHERE dominio=$1', [dom]);
       isPublicDomain = pub.rowCount > 0;
     } catch (e) {
-      // 42P01 = tabla inexistente; no rompemos el flujo
-      if (e?.code !== '42P01') throw e;
+      if (e?.code !== '42P01') throw e; // tabla no existe
       isPublicDomain = false;
     }
 
@@ -136,7 +187,7 @@ exports.register = async (req, res) => {
           [dom]
         );
       } catch (e) {
-        if (e?.code !== '42P01') throw e; // si es otra cosa, la propagamos
+        if (e?.code !== '42P01') throw e;
       }
 
       if (domRow.rowCount > 0) {
@@ -150,7 +201,6 @@ exports.register = async (req, res) => {
         organizacion_id = orgIns.rows[0].id;
         createdOrgNow = true;
 
-        // Intentar registrar el dominio (si la tabla existe)
         const token = crypto.randomBytes(12).toString('hex');
         try {
           await client.query(
@@ -172,14 +222,10 @@ exports.register = async (req, res) => {
     }
 
     // Rol por defecto
-    if (!rol) {
-      rol = createdOrgNow ? 'owner' : 'user';
-    }
+    if (!rol) rol = createdOrgNow ? 'owner' : 'user';
 
     // Forzar superadmin si está whitelisteado
-    if (isSuperadminEmail(email)) {
-      rol = 'superadmin';
-    }
+    if (isSuperadminEmail(email)) rol = 'superadmin';
 
     // Duplicado dentro de la org → 409
     const dupe = await client.query(
@@ -188,10 +234,11 @@ exports.register = async (req, res) => {
     );
     if (dupe.rowCount) {
       await client.query('ROLLBACK');
+      warn('REGISTER duplicate', { email, organizacion_id });
       return res.status(409).json({ error: 'El email ya existe en esa organización' });
     }
 
-    // Insert usuario
+    // Insert usuario (hash en la misma columna "password")
     const hashed = await bcrypt.hash(password, 10);
     const insert = `
       INSERT INTO usuarios (email, password, nombre, rol, organizacion_id)
@@ -202,6 +249,7 @@ exports.register = async (req, res) => {
 
     await client.query('COMMIT');
 
+    dbg('REGISTER success', { email, rol, organizacion_id, createdOrgNow });
     return res.status(201).json({
       message: 'Usuario registrado con éxito',
       usuario: rows[0],
@@ -209,16 +257,15 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+    warn('REGISTER error', error?.code, error?.message);
     if (process.env.NODE_ENV !== 'production') {
       console.error('[authController/register] Error:', error?.code, error?.message);
     }
 
     if (error?.code === '23505') {
-      // unique_violation
       return res.status(409).json({ error: 'El email ya existe' });
     }
     if (error?.code === '23503') {
-      // foreign_key_violation (p.ej. organizacion_id inválido)
       return res.status(400).json({ error: 'Organización inválida' });
     }
 
