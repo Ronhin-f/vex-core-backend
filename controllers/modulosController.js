@@ -1,89 +1,168 @@
 // controllers/modulosController.js
-const { isSuperadminEmail } = require('../config/superadmins');
+const MOD_DEBUG = process.env.MODULOS_DEBUG === '1';
+const dbg = (...a) => MOD_DEBUG && console.log('[MODULOS]', ...a);
 
-// Devuelve los módulos habilitados para la organización autenticada
+/**
+ * GET /modulos
+ * Devuelve los módulos de la organización del usuario autenticado.
+ * - Si el usuario no tiene organizacion_id (p.ej. superadmin “global”), devolvemos [].
+ * Respuesta: [{ nombre, habilitado }, ...]
+ */
+exports.getMisModulos = async (req, res) => {
+  try {
+    const orgId = req.user?.organizacion_id;
+    if (!orgId) {
+      // Superadmin sin org asignada: no hay módulos que mostrar por org
+      dbg('getMisModulos: user without organizacion_id → []');
+      return res.json([]);
+    }
+
+    const { rows } = await req.db.query(
+      `SELECT nombre, habilitado
+         FROM modulos
+        WHERE organizacion_id = $1
+        ORDER BY nombre`,
+      [orgId]
+    );
+
+    const out = rows.map(r => ({ nombre: r.nombre, habilitado: !!r.habilitado }));
+    dbg('getMisModulos:', { orgId, count: out.length });
+    return res.json(out);
+  } catch (e) {
+    console.error('[getMisModulos] Error:', e?.message);
+    return res.status(500).json({ error: 'No se pudieron cargar los módulos' });
+  }
+};
+
+/**
+ * GET /modulos/:nombre
+ * Estado de un módulo por nombre para la org del usuario autenticado.
+ * Respuesta: { nombre, habilitado }
+ */
+exports.getModuloByNombre = async (req, res) => {
+  try {
+    const orgId = req.user?.organizacion_id;
+    const { nombre } = req.params || {};
+    if (!orgId) {
+      return res.status(401).json({ error: 'No autorizado: falta organización' });
+    }
+    if (!nombre) {
+      return res.status(400).json({ error: 'Nombre de módulo requerido' });
+    }
+
+    const { rows } = await req.db.query(
+      `SELECT habilitado
+         FROM modulos
+        WHERE organizacion_id = $1
+          AND nombre = $2
+        LIMIT 1`,
+      [orgId, nombre]
+    );
+
+    const habilitado = !!rows?.[0]?.habilitado;
+    dbg('getModuloByNombre:', { orgId, nombre, habilitado });
+    return res.json({ nombre, habilitado });
+  } catch (e) {
+    console.error('[getModuloByNombre] Error:', e?.message);
+    return res.status(500).json({ error: 'Error al verificar módulo' });
+  }
+};
+
+/**
+ * POST /modulos/toggle  (owner de su propia org)
+ * Body: { nombre: string, habilitado: boolean }
+ * Requiere: requireAuth + requireRole('owner') en rutas.
+ */
+exports.ownerToggle = async (req, res) => {
+  try {
+    const orgId = req.user?.organizacion_id;
+    const { nombre, habilitado } = req.body || {};
+
+    if (!orgId) return res.status(401).json({ error: 'No autorizado: falta organización' });
+    if (!nombre || typeof habilitado !== 'boolean') {
+      return res.status(400).json({ error: 'Parámetros inválidos' });
+    }
+
+    const q = `
+      WITH up AS (
+        UPDATE modulos
+           SET habilitado = $3
+         WHERE organizacion_id = $1
+           AND nombre = $2
+      RETURNING *
+      )
+      INSERT INTO modulos (organizacion_id, nombre, habilitado)
+      SELECT $1, $2, $3
+       WHERE NOT EXISTS (SELECT 1 FROM up)
+      RETURNING *;
+    `;
+    const { rows } = await req.db.query(q, [orgId, nombre, habilitado]);
+    dbg('ownerToggle', { orgId, nombre, habilitado });
+
+    return res.json({ ok: true, modulo: rows[0] || null });
+  } catch (e) {
+    console.error('[ownerToggle] Error:', e?.message);
+    return res.status(500).json({ error: 'No se pudo actualizar el módulo' });
+  }
+};
+
+/**
+ * POST /modulos/superadmin  (puede tocar cualquier organización)
+ * Body: { organizacion_id: number, nombre: string, habilitado: boolean }
+ * Requiere: requireAuth + requireRole('superadmin') en rutas.
+ */
+exports.superToggle = async (req, res) => {
+  try {
+    const { organizacion_id, nombre, habilitado } = req.body || {};
+    if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
+      return res.status(400).json({ error: 'Parámetros inválidos' });
+    }
+
+    const q = `
+      WITH up AS (
+        UPDATE modulos
+           SET habilitado = $3
+         WHERE organizacion_id = $1
+           AND nombre = $2
+      RETURNING *
+      )
+      INSERT INTO modulos (organizacion_id, nombre, habilitado)
+      SELECT $1, $2, $3
+       WHERE NOT EXISTS (SELECT 1 FROM up)
+      RETURNING *;
+    `;
+    const { rows } = await req.db.query(q, [organizacion_id, nombre, habilitado]);
+    dbg('superToggle', { organizacion_id, nombre, habilitado });
+
+    return res.json({ ok: true, modulo: rows[0] || null });
+  } catch (e) {
+    console.error('[superToggle] Error:', e?.message);
+    return res.status(500).json({ error: 'No se pudo actualizar el módulo' });
+  }
+};
+
+/* ====== Aliases para compatibilidad con código viejo ====== */
+// Antes devolvías objeto plano { nombre: habilitado }. Lo mantenemos como alias opcional.
 exports.getModulos = async (req, res) => {
   try {
-    const organizacion_id = req.organizacion_id || req.usuario?.organizacion_id;
-    if (!organizacion_id) {
-      return res.status(401).json({ error: "No autorizado: falta organización" });
-    }
+    const orgId = req.user?.organizacion_id;
+    if (!orgId) return res.status(401).json({ error: 'No autorizado: falta organización' });
 
-    const result = await req.db.query(
-      `SELECT nombre, habilitado FROM modulos WHERE organizacion_id = $1`,
-      [organizacion_id]
+    const { rows } = await req.db.query(
+      `SELECT nombre, habilitado
+         FROM modulos
+        WHERE organizacion_id = $1`,
+      [orgId]
     );
-
-    const modulosPlano = {};
-    for (const row of result.rows) modulosPlano[row.nombre] = row.habilitado;
-
-    res.json(modulosPlano);
-  } catch (err) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[modulosController/getModulos]', err);
-    }
-    res.status(500).json({ error: 'Error al obtener módulos' });
+    const plano = {};
+    for (const r of rows) plano[r.nombre] = !!r.habilitado;
+    dbg('getModulos (alias):', { orgId, keys: Object.keys(plano).length });
+    return res.json(plano);
+  } catch (e) {
+    console.error('[getModulos alias] Error:', e?.message);
+    return res.status(500).json({ error: 'Error al obtener módulos' });
   }
 };
 
-// Estado de un módulo por nombre
-exports.getModuloByNombre = async (req, res) => {
-  const { nombre } = req.params;
-  try {
-    const organizacion_id = req.organizacion_id || req.usuario?.organizacion_id;
-    if (!organizacion_id) {
-      return res.status(401).json({ error: "No autorizado: falta organización" });
-    }
-    const result = await req.db.query(
-      `SELECT habilitado FROM modulos WHERE organizacion_id = $1 AND nombre = $2`,
-      [organizacion_id, nombre]
-    );
-    const habilitado = result.rows[0]?.habilitado || false;
-    res.json({ nombre, habilitado });
-  } catch (err) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[modulosController/getModuloByNombre]', err);
-    }
-    res.status(500).json({ error: 'Error al verificar módulo' });
-  }
-};
-
-// Activar/desactivar módulos (solo superadmin por whitelist o rol)
-exports.toggleModuloSuperadmin = async (req, res) => {
-  const email = req.usuario_email;
-  const esSuperadmin = req.usuario?.rol === 'superadmin' || isSuperadminEmail(email);
-  if (!esSuperadmin) {
-    return res.status(403).json({ error: 'Acceso denegado' });
-  }
-
-  const { organizacion_id, nombre, habilitado } = req.body || {};
-  if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
-    return res.status(400).json({ error: 'Faltan datos o tipo incorrecto' });
-  }
-
-  try {
-    const existe = await req.db.query(
-      'SELECT id FROM modulos WHERE organizacion_id = $1 AND nombre = $2',
-      [organizacion_id, nombre]
-    );
-
-    if (existe.rowCount > 0) {
-      await req.db.query(
-        'UPDATE modulos SET habilitado = $1 WHERE organizacion_id = $2 AND nombre = $3',
-        [habilitado, organizacion_id, nombre]
-      );
-    } else {
-      await req.db.query(
-        'INSERT INTO modulos (organizacion_id, nombre, habilitado) VALUES ($1, $2, $3)',
-        [organizacion_id, nombre, habilitado]
-      );
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[modulosController/toggleModuloSuperadmin]', err);
-    }
-    res.status(500).json({ error: 'Error al actualizar módulo' });
-  }
-};
+// Alias del toggle de superadmin antiguo
+exports.toggleModuloSuperadmin = exports.superToggle;
