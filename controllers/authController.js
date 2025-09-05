@@ -27,27 +27,27 @@ exports.requireAuth = (req, res, next) => {
   try {
     const h = req.headers.authorization || '';
     const token = h.startsWith('Bearer ') ? h.slice(7) : null;
-    if (!token) return res.status(401).json({ ok:false, error:'NO_TOKEN' });
+    if (!token) return res.status(401).json({ ok: false, error: 'NO_TOKEN' });
     const payload = jwt.verify(token, JWT_SECRET);
     req.user = payload;
     return next();
   } catch (e) {
     if (AUTH_DEBUG) console.error('[AUTH_DEBUG] requireAuth error:', e?.message);
-    return res.status(401).json({ ok:false, error:'INVALID_TOKEN' });
+    return res.status(401).json({ ok: false, error: 'INVALID_TOKEN' });
   }
 };
 
 // ===== Role middleware =====
 exports.requireRole = (...roles) => (req, res, next) => {
   if (!req.user || !roles.includes(req.user.rol)) {
-    return res.status(403).json({ ok:false, error:'FORBIDDEN' });
+    return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
   }
   next();
 };
 
 // ===== Diagnóstico =====
 exports.me = (req, res) => {
-  return res.json({ ok:true, user: req.user });
+  return res.json({ ok: true, user: req.user });
 };
 
 /* =========================
@@ -58,6 +58,11 @@ exports.login = async (req, res) => {
   try {
     let { email, password, organizacion_id } = req.body || {};
     email = normEmail(email);
+    if (organizacion_id !== undefined && organizacion_id !== null) {
+      // normalizar a número si viene como string
+      const n = Number(organizacion_id);
+      organizacion_id = Number.isFinite(n) ? n : organizacion_id;
+    }
 
     dbg('LOGIN >> email:', email, 'org:', organizacion_id || '(none)');
 
@@ -107,6 +112,22 @@ exports.login = async (req, res) => {
     }
 
     if (all.rowCount > 1) {
+      // ⚠️ Seguridad: validar contraseña antes de listar organizaciones
+      let passwordMatch = false;
+      for (const u of all.rows) {
+        const hashed = looksLikeBcryptHash(u.password);
+        try {
+          const ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password);
+          if (ok) { passwordMatch = true; break; }
+        } catch (e) {
+          warn('LOGIN compare error (multi-org loop):', e?.message);
+        }
+      }
+      if (!passwordMatch) {
+        warn('LOGIN compare_failed (multi-org)');
+        return res.status(401).json({ error: 'Credenciales inválidas' });
+      }
+
       const { rows: opciones } = await req.db.query(
         `SELECT u.organizacion_id, o.nombre
          FROM usuarios u
