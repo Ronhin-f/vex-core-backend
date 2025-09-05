@@ -1,9 +1,12 @@
 // routes/superadminRoutes.js
 const express = require('express');
 const router = express.Router();
-const { authenticateToken } = require('../middlewares/auth');
-const superadminController = require('../controllers/superadminController');
+const { requireAuth, requireRole } = require('../controllers/authController');
+const superadmin = require('../controllers/superadminController');
 
-router.get('/organizaciones', authenticateToken, superadminController.getOrganizaciones);
+// 🔒 Todo /superadmin exige token + rol superadmin
+router.use(requireAuth, requireRole('superadmin'));
+
+router.get('/organizaciones', superadmin.getOrganizaciones);
 
 module.exports = router;

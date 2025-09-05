@@ -37,6 +37,14 @@ exports.requireAuth = (req, res, next) => {
   }
 };
 
+// ===== Role middleware =====
+exports.requireRole = (...roles) => (req, res, next) => {
+  if (!req.user || !roles.includes(req.user.rol)) {
+    return res.status(403).json({ ok:false, error:'FORBIDDEN' });
+  }
+  next();
+};
+
 // ===== Diagnóstico =====
 exports.me = (req, res) => {
   return res.json({ ok:true, user: req.user });
@@ -170,7 +178,6 @@ exports.register = async (req, res) => {
     const dom = extractDomain(email);
     if (!dom) return res.status(400).json({ error: 'Email inválido' });
 
-    // dominio público (si existe la tabla)
     let isPublicDomain = false;
     try {
       const pub = await req.db.query('SELECT 1 FROM dominios_publicos WHERE dominio=$1', [dom]);
@@ -184,7 +191,6 @@ exports.register = async (req, res) => {
 
     let createdOrgNow = false;
 
-    // Resolver organización (si existe tabla de dominios)
     if (!organizacion_id) {
       let domRow = { rowCount: 0, rows: [] };
       try {
@@ -240,7 +246,7 @@ exports.register = async (req, res) => {
       return res.status(409).json({ error: 'El email ya existe en esa organización' });
     }
 
-    const hashed = await bcrypt.hash(password, 10); // guardamos hash en "password"
+    const hashed = await bcrypt.hash(password, 10); // hash en columna "password"
     const insert = `
       INSERT INTO usuarios (email, password, nombre, rol, organizacion_id)
       VALUES ($1,$2,$3,$4,$5)
