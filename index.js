@@ -29,7 +29,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:5173',
   'https://vex-core-frontend.vercel.app',
-  'https://vex-core-landing.vercel.app', // lo mantenemos si lo usás
+  'https://vex-core-landing.vercel.app', // opcional, dejalo si lo usás
   'https://vex-crm-frontend.vercel.app',
   'https://vex-stock-frontend.vercel.app',
 ];
@@ -52,7 +52,9 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // preflight global
+// ⚠️ Express 5 / path-to-regexp v6 no tolera '*' acá.
+// Usamos RegExp para preflight global seguro:
+app.options(/.*/, cors(corsOptions));
 
 /* ================================
    Parsers (antes de usar req.body)
@@ -65,7 +67,7 @@ app.use(express.urlencoded({ extended: true }));
    Inyección de pool (compat req.db y app.locals)
    ============================================ */
 app.use((req, _res, next) => {
-  req.db = pool;              // tu patrón actual
+  req.db = pool;              // patrón actual
   req.app.locals.pool = pool; // compat con controladores que lean app.locals
   next();
 });
