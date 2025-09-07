@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { requireAuth, requireRole } = require('../middleware/auth'); // ajustá el path si tu middleware se llama distinto
+const { requireAuth, requireRole } = require('../middlewares/auth'); // ajustá el path si tu middleware se llama distinto
 const modulos = require('../controllers/modulosController');
 
 // Debug opcional para confirmar carga del módulo en logs
