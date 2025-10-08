@@ -18,4 +18,8 @@ router.post('/register', authController.register);
 // Diagnóstico de sesión
 router.get('/me', authController.requireAuth, authController.me);
 
+// 🔎 Introspección de token (para Flows/servicios internos)
+router.get('/introspect', authController.introspect);
+
 module.exports = router;
+

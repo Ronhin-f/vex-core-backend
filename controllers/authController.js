@@ -69,6 +69,46 @@ exports.me = (req, res) => {
 };
 
 /* =========================
+   GET /auth/introspect  (JWT only)
+   Respuesta esperada por Flows: { valid, user_email, role, org_id }
+   ========================= */
+exports.introspect = (req, res) => {
+  try {
+    const h = req.headers.authorization || req.headers.Authorization || '';
+    const token = h.startsWith('Bearer ') ? h.slice(7).trim() : null;
+    if (!token) return res.status(401).json({ valid: false, active: false, error: 'missing_token' });
+
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      if (AUTH_DEBUG) console.error('[AUTH_DEBUG] introspect invalid:', e?.message);
+      return res.status(401).json({ valid: false, active: false, error: 'invalid_token' });
+    }
+
+    const email = normEmail(payload.email || payload.user_email || '');
+    const org_id = payload.organizacion_id ?? payload.org_id ?? null;
+
+    // respetar superadmin
+    let role = payload.rol || payload.role || 'user';
+    if (isSuperadminEmail(email)) role = 'superadmin';
+
+    return res.json({
+      // dejamos ambos flags por compatibilidad futura
+      valid: true,
+      active: true,
+      user_email: email,
+      role,
+      org_id,
+      isService: false,
+    });
+  } catch (err) {
+    console.error('[INTROSPECT_ERROR]', err);
+    return res.status(500).json({ valid: false, active: false, error: 'introspect_error' });
+  }
+};
+
+/* =========================
    POST /auth/login
    ========================= */
 exports.login = async (req, res) => {

@@ -5,6 +5,7 @@ const { isSuperadminEmail } = require('../config/superadmins');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error('Falta definir JWT_SECRET en el entorno');
 
+/* ---------------- Utils ---------------- */
 function normalizeUser(decoded) {
   const base = {
     id: decoded.id ?? decoded.user_id ?? decoded.uid ?? null,
@@ -17,9 +18,16 @@ function normalizeUser(decoded) {
   return base;
 }
 
+function readBearer(req) {
+  const h = req.headers?.authorization || req.headers?.Authorization || '';
+  if (typeof h !== 'string') return null;
+  if (!h.startsWith('Bearer ')) return null;
+  return h.slice(7).trim();
+}
+
+/* ------------- Middlewares -------------- */
 function requireAuth(req, res, next) {
-  const authHeader = req.headers['authorization'] || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const token = readBearer(req);
   if (!token) return res.status(401).json({ error: 'Token requerido' });
 
   try {
@@ -27,8 +35,8 @@ function requireAuth(req, res, next) {
     const user = normalizeUser(decoded);
 
     // Campos nuevos + legacy
-    req.user = user;                 // <-- lo que esperan los controllers
-    req.usuario = user;              // <-- compat con código viejo
+    req.user = user;                 // esperado por controllers nuevos
+    req.usuario = user;              // compat código viejo
     req.usuario_email = user.email;  // legacy
     req.organizacion_id = user.organizacion_id; // legacy
 
@@ -52,10 +60,37 @@ function requireRole(...roles) {
   };
 }
 
-// Export público esperado por las rutas
+/* ------------- Handler: /api/auth/introspect (JWT only) ------------- */
+function introspect(req, res) {
+  try {
+    const token = readBearer(req);
+    if (!token) return res.status(401).json({ active: false, error: 'missing_token' });
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ active: false, error: 'invalid_token' });
+    }
+
+    const user = normalizeUser(decoded);
+    return res.json({
+      active: true,
+      user_email: user.email,
+      role: user.rol || 'user',
+      org_id: user.organizacion_id || null,
+      isService: false, // hoy no usamos service tokens
+    });
+  } catch (err) {
+    console.error('[INTROSPECT_ERROR]', err);
+    return res.status(500).json({ active: false, error: 'introspect_error' });
+  }
+}
+
+/* ------------- Exports ------------- */
 module.exports = {
   requireAuth,
   requireRole,
-  // compat con tu nombre anterior
-  authenticateToken: requireAuth,
+  authenticateToken: requireAuth, // compat
+  introspect,                    // <-- NUEVO
 };
