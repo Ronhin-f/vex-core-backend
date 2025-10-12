@@ -2,15 +2,21 @@
 const MOD_DEBUG = process.env.MODULOS_DEBUG === '1';
 const dbg = (...a) => MOD_DEBUG && console.log('[MODULOS]', ...a);
 
+const ALLOWED = new Set(['crm', 'stock', 'flows']); // módulos soportados
+
+function normName(s = '') {
+  return String(s).trim().toLowerCase();
+}
+
 /**
- * Normaliza filas a objeto plano { crm: bool, stock: bool }.
+ * Normaliza filas a objeto plano { crm: bool, stock: bool, flows: bool }.
  * Mantiene defaults en false.
  */
 function rowsToObj(rows = []) {
-  const out = { crm: false, stock: false };
+  const out = { crm: false, stock: false, flows: false };
   for (const r of rows) {
-    const name = String(r.nombre || '').toLowerCase();
-    if (name === 'crm' || name === 'stock') {
+    const name = normName(r.nombre);
+    if (ALLOWED.has(name)) {
       out[name] = !!r.habilitado;
     }
   }
@@ -19,15 +25,15 @@ function rowsToObj(rows = []) {
 
 /**
  * GET /modulos
- * Debe responder un OBJETO PLANO { crm: bool, stock: bool }.
- * Si no hay org, devolvemos { crm:false, stock:false } (no 401).
+ * Debe responder un OBJETO PLANO { crm, stock, flows }.
+ * Si no hay org, devolvemos { crm:false, stock:false, flows:false } (no 401).
  */
 exports.getModulos = async (req, res) => {
   try {
     const orgId = req.user?.organizacion_id;
     if (!orgId) {
-      dbg('getModulos: user sin organizacion_id → {crm:false,stock:false}');
-      return res.json({ crm: false, stock: false });
+      dbg('getModulos: user sin organizacion_id → {crm:false,stock:false,flows:false}');
+      return res.json({ crm: false, stock: false, flows: false });
     }
 
     const { rows } = await req.db.query(
@@ -53,9 +59,14 @@ exports.getModulos = async (req, res) => {
 exports.getModuloByNombre = async (req, res) => {
   try {
     const orgId = req.user?.organizacion_id;
-    const { nombre } = req.params || {};
+    const nombreRaw = req.params?.nombre;
+    if (!nombreRaw) return res.status(400).json({ error: 'Nombre de módulo requerido' });
 
-    if (!nombre) return res.status(400).json({ error: 'Nombre de módulo requerido' });
+    const nombre = normName(nombreRaw);
+    if (!ALLOWED.has(nombre)) {
+      return res.status(400).json({ error: 'Módulo inválido' });
+    }
+
     if (!orgId) return res.json({ nombre, habilitado: false });
 
     const { rows } = await req.db.query(
@@ -83,11 +94,16 @@ exports.getModuloByNombre = async (req, res) => {
 exports.ownerToggle = async (req, res) => {
   try {
     const orgId = req.user?.organizacion_id;
-    const { nombre, habilitado } = req.body || {};
+    let { nombre, habilitado } = req.body || {};
 
     if (!orgId) return res.status(401).json({ error: 'No autorizado: falta organización' });
     if (!nombre || typeof habilitado !== 'boolean') {
       return res.status(400).json({ error: 'Parámetros inválidos' });
+    }
+
+    nombre = normName(nombre);
+    if (!ALLOWED.has(nombre)) {
+      return res.status(400).json({ error: 'Módulo inválido' });
     }
 
     const q = `
@@ -121,9 +137,14 @@ exports.ownerToggle = async (req, res) => {
  */
 exports.superToggle = async (req, res) => {
   try {
-    const { organizacion_id, nombre, habilitado } = req.body || {};
+    let { organizacion_id, nombre, habilitado } = req.body || {};
     if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
       return res.status(400).json({ error: 'Parámetros inválidos' });
+    }
+
+    nombre = normName(nombre);
+    if (!ALLOWED.has(nombre)) {
+      return res.status(400).json({ error: 'Módulo inválido' });
     }
 
     const q = `
