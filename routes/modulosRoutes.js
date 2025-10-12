@@ -2,26 +2,30 @@
 const express = require('express');
 const router = express.Router();
 
-const { requireAuth, requireRole } = require('../middlewares/auth'); // ajustá el path si tu middleware se llama distinto
+// Middlewares con bypass superadmin
+const { requireAuth, requireRole } = require('../controllers/authController');
 const modulos = require('../controllers/modulosController');
 
-// Debug opcional para confirmar carga del módulo en logs
-console.info('[ROUTES/modulos] typeof auth.requireAuth =', typeof requireAuth);
-console.info('[ROUTES/modulos] typeof auth.requireRole  =', typeof requireRole);
-console.info('[ROUTES/modulos] typeof modulos.getMisModulos =', typeof modulos.getMisModulos);
-console.info('[ROUTES/modulos] typeof modulos.ownerToggle   =', typeof modulos.ownerToggle);
-console.info('[ROUTES/modulos] typeof modulos.superToggle   =', typeof modulos.superToggle);
+// Debug opcional
+const DBG = process.env.MODULOS_ROUTES_DEBUG === '1';
+if (DBG) {
+  console.info('[ROUTES/modulos] typeof requireAuth     =', typeof requireAuth);
+  console.info('[ROUTES/modulos] typeof requireRole     =', typeof requireRole);
+  console.info('[ROUTES/modulos] typeof modulos.getMods =', typeof modulos.getMisModulos);
+  console.info('[ROUTES/modulos] typeof modulos.toggle  =', typeof modulos.ownerToggle);
+  console.info('[ROUTES/modulos] typeof modulos.super   =', typeof modulos.superToggle);
+}
 
-// Lista de módulos de la organización del usuario (objeto plano {crm:boolean, stock:boolean})
+// Lista de módulos (obj plano {crm,stock,flows})
 router.get('/', requireAuth, modulos.getMisModulos);
 
-// Estado de un módulo puntual {nombre, habilitado}
+// Estado puntual
 router.get('/:nombre', requireAuth, modulos.getModuloByNombre);
 
-// Owner puede togglear en su propia organización
+// Owner toggle (superadmin pasa por bypass)
 router.post('/toggle', requireAuth, requireRole('owner'), modulos.ownerToggle);
 
-// Superadmin puede togglear en cualquier organización
+// Superadmin toggle
 router.post('/superadmin', requireAuth, requireRole('superadmin'), modulos.superToggle);
 
 module.exports = router;
