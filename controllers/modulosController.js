@@ -171,6 +171,39 @@ exports.superToggle = async (req, res) => {
   }
 };
 
+/**
+ * GET /modulos/:nombre/config
+ * Lee la configuración del módulo desde system_settings (key = nombre).
+ * Esperado en DB (ej. flows): { fe_url: string, api_base: string }
+ */
+exports.getModuloConfig = async (req, res) => {
+  try {
+    const nombre = normName(req.params?.nombre || '');
+    if (!ALLOWED.has(nombre)) {
+      return res.status(400).json({ ok: false, error: 'modulo_invalido', nombre });
+    }
+
+    const { rows } = await req.db.query(
+      'SELECT value FROM system_settings WHERE key = $1 LIMIT 1',
+      [nombre]
+    );
+
+    const cfg = rows?.[0]?.value || null;
+    if (!cfg) {
+      dbg('getModuloConfig: config_not_found', { nombre });
+      return res.status(404).json({ ok: false, error: 'config_not_found', nombre });
+    }
+
+    // Devolvemos plano para el FE: { ok, nombre, ...cfg }
+    const out = { ok: true, nombre, ...cfg };
+    dbg('getModuloConfig:', out);
+    return res.json(out);
+  } catch (e) {
+    console.error('[getModuloConfig] Error:', e?.message);
+    return res.status(500).json({ ok: false, error: e?.message || 'config_error' });
+  }
+};
+
 /** Aliases para compatibilidad con código viejo */
 exports.getMisModulos = exports.getModulos;              // antes usabas este nombre
 exports.toggleModuloSuperadmin = exports.superToggle;    // alias viejo

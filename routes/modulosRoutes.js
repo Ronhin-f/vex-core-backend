@@ -9,15 +9,19 @@ const modulos = require('../controllers/modulosController');
 // Debug opcional
 const DBG = process.env.MODULOS_ROUTES_DEBUG === '1';
 if (DBG) {
-  console.info('[ROUTES/modulos] typeof requireAuth     =', typeof requireAuth);
-  console.info('[ROUTES/modulos] typeof requireRole     =', typeof requireRole);
-  console.info('[ROUTES/modulos] typeof modulos.getMods =', typeof modulos.getMisModulos);
-  console.info('[ROUTES/modulos] typeof modulos.toggle  =', typeof modulos.ownerToggle);
-  console.info('[ROUTES/modulos] typeof modulos.super   =', typeof modulos.superToggle);
+  console.info('[ROUTES/modulos] typeof requireAuth       =', typeof requireAuth);
+  console.info('[ROUTES/modulos] typeof requireRole       =', typeof requireRole);
+  console.info('[ROUTES/modulos] typeof modulos.getMods   =', typeof modulos.getMisModulos);
+  console.info('[ROUTES/modulos] typeof modulos.toggle    =', typeof modulos.ownerToggle);
+  console.info('[ROUTES/modulos] typeof modulos.super     =', typeof modulos.superToggle);
+  console.info('[ROUTES/modulos] typeof modulos.getConfig =', typeof modulos.getModuloConfig);
 }
 
 // Lista de módulos (obj plano {crm,stock,flows})
 router.get('/', requireAuth, modulos.getMisModulos);
+
+// Config de módulo (flows | crm | stock) -> { fe_url, api_base, ... }
+router.get('/:nombre/config', requireAuth, modulos.getModuloConfig);
 
 // Estado puntual
 router.get('/:nombre', requireAuth, modulos.getModuloByNombre);
