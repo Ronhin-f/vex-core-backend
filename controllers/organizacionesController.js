@@ -58,6 +58,14 @@ exports.getDomainInfo = async (req, res) => {
       return res.json({ existe: false, isPublicDomain });
     }
     const row = r.rows[0];
+    const esSuper = req.usuario?.rol === 'superadmin' || isSuperadminEmail(req.usuario_email);
+    const mismaOrg = req.organizacion_id && row.organizacion_id === req.organizacion_id;
+
+    if (!esSuper && !mismaOrg) {
+      // No exponemos datos de otras organizaciones
+      return res.json({ existe: true, isPublicDomain });
+    }
+
     return res.json({
       existe: true,
       isPublicDomain,
@@ -74,6 +82,11 @@ exports.getDomainInfo = async (req, res) => {
 // Crear u obtener org por nombre exacto
 exports.createOrGetOrganizacion = async (req, res) => {
   try {
+    const rol = req.usuario?.rol || req.user?.rol;
+    if (!['owner', 'superadmin'].includes(rol)) {
+      return res.status(403).json({ error: 'Solo owner o superadmin pueden crear organizaciones' });
+    }
+
     const nombreRaw = (req.body?.nombre || '').trim();
     if (!nombreRaw) return res.status(400).json({ error: 'Falta nombre' });
 

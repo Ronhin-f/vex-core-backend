@@ -3,6 +3,10 @@ const jwt = require('jsonwebtoken');
 const { isSuperadminEmail } = require('../config/superadmins');
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_ISSUER = process.env.JWT_ISSUER || 'vex-core';
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'vex-core-clients';
+const JWT_VERIFY_OPTIONS = { algorithms: ['HS256'], issuer: JWT_ISSUER, audience: JWT_AUDIENCE };
+
 if (!JWT_SECRET) throw new Error('Falta definir JWT_SECRET en el entorno');
 
 /* ---------------- Utils ---------------- */
@@ -33,7 +37,7 @@ function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Token requerido' });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET, JWT_VERIFY_OPTIONS);
     const user = normalizeUser(decoded);
 
     // Campos nuevos + legacy
@@ -71,7 +75,7 @@ function introspect(req, res) {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, JWT_SECRET);
+      decoded = jwt.verify(token, JWT_SECRET, JWT_VERIFY_OPTIONS);
     } catch (e) {
       return res.status(401).json({ active: false, error: 'invalid_token' });
     }

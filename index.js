@@ -3,6 +3,8 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const crypto = require('crypto');
 
 // Rutas
 const authRoutes = require('./routes/authRoutes');
@@ -20,8 +22,11 @@ if (!process.env.JWT_SECRET) {
   throw new Error('Falta la variable JWT_SECRET en el entorno de ejecución.');
 }
 
-const app = express();
 const PORT = process.env.PORT || 8080;
+const app = express();
+
+// Aceptamos proxy inverso (Railway) para IP real y cookies seguras
+app.set('trust proxy', 1);
 
 /* ================================
    CORS (arriba y con Vary: Origin)
@@ -54,6 +59,21 @@ app.use((req, res, next) => {
 app.use(cors(corsOptions));
 // Preflight global seguro
 app.options(/.*/, cors(corsOptions));
+
+// Headers de hardening (CSP deshabilitado para compat con FE)
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// x-request-id para trazabilidad
+app.use((req, res, next) => {
+  const rid = req.headers['x-request-id'] || (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex'));
+  req.id = rid;
+  res.setHeader('X-Request-Id', rid);
+  next();
+});
 
 /* ================================
    Parsers

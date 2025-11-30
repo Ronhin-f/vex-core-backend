@@ -9,7 +9,21 @@ const { JWT_SECRET } = process.env;
 if (!JWT_SECRET) throw new Error('JWT_SECRET no esta definido en el entorno.');
 
 const AUTH_DEBUG = process.env.AUTH_DEBUG === '1';
-const ALLOW_PLAIN_PASSWORD = process.env.AUTH_ALLOW_PLAIN === '1';
+const JWT_ISSUER = process.env.JWT_ISSUER || 'vex-core';
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'vex-core-clients';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
+const JWT_OPTS = { issuer: JWT_ISSUER, audience: JWT_AUDIENCE };
+const JWT_VERIFY_OPTIONS = { ...JWT_OPTS, algorithms: ['HS256'] };
+
+const ALLOW_PLAIN_PASSWORD = false;
+if (process.env.AUTH_ALLOW_PLAIN === '1') {
+  console.warn('[AUTH] AUTH_ALLOW_PLAIN ignorado: passwords en texto plano deshabilitados');
+}
+
+function signToken(payload) {
+  const jti = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+  return jwt.sign({ ...payload, jti }, JWT_SECRET, { ...JWT_OPTS, expiresIn: JWT_EXPIRES_IN });
+}
 
 function extractDomain(email = '') {
   const m = String(email).toLowerCase().trim().match(/@([^@]+)$/);
@@ -47,7 +61,7 @@ exports.introspect = (req, res) => {
 
     let payload;
     try {
-      payload = jwt.verify(token, JWT_SECRET);
+      payload = jwt.verify(token, JWT_SECRET, JWT_VERIFY_OPTIONS);
     } catch (e) {
       if (AUTH_DEBUG) console.error('[AUTH_DEBUG] introspect invalid:', e?.message);
       return res.status(401).json({ valid: false, active: false, error: 'invalid_token' });
@@ -128,7 +142,7 @@ exports.login = async (req, res) => {
 
       const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
       const payload = { email: u.email, rol: rolFinal, organizacion_id: u.organizacion_id, nombre: u.nombre };
-      const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '12h' });
+      const token = signToken(payload);
       dbg('LOGIN success (with org)', { email, rolFinal, ms: Date.now() - t0 });
       return res.json({ ok: true, token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
     }
@@ -201,7 +215,7 @@ exports.login = async (req, res) => {
 
     const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
     const payload = { email: u.email, rol: rolFinal, organizacion_id: u.organizacion_id, nombre: u.nombre };
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '12h' });
+    const token = signToken(payload);
 
     dbg('LOGIN success', { email, rolFinal, org: u.organizacion_id, super: emailEsSuperadmin, ms: Date.now() - t0 });
     return res.json({ ok: true, token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
@@ -236,8 +250,12 @@ exports.register = async (req, res) => {
       warn('REGISTER missing fields', { hasEmail: !!email, hasPassword: !!password, hasNombre: !!nombre });
       return res.status(400).json({ ok: false, error: 'Faltan datos: nombre, email y contrasena son obligatorios' });
     }
-    if (password.length < 8) {
-      return res.status(400).json({ ok: false, error: 'La contrasena debe tener al menos 8 caracteres' });
+    const strongPassword = password.length >= 12 && /[A-Za-z]/.test(password) && /\d/.test(password);
+    if (!strongPassword) {
+      return res.status(400).json({
+        ok: false,
+        error: 'La contrasena debe tener minimo 12 caracteres, letras y numeros'
+      });
     }
 
     const dom = extractDomain(email);
