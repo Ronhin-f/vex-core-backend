@@ -227,6 +227,53 @@ exports.login = async (req, res) => {
 };
 
 /* =========================
+   POST /auth/change-password
+   ========================= */
+exports.changePassword = async (req, res) => {
+  try {
+    const email = req.user?.email;
+    const orgId = req.user?.organizacion_id;
+    const { old_password, new_password } = req.body || {};
+
+    if (!email || !orgId) return res.status(401).json({ ok: false, error: 'No autorizado' });
+    if (!old_password || !new_password) {
+      return res.status(400).json({ ok: false, error: 'Faltan parametros' });
+    }
+
+    const strong = new_password.length >= 12 && /[A-Za-z]/.test(new_password) && /\d/.test(new_password);
+    if (!strong) {
+      return res.status(400).json({ ok: false, error: 'Password debe tener minimo 12 caracteres, letras y numeros' });
+    }
+
+    const { rows } = await req.db.query(
+      'SELECT password FROM usuarios WHERE email=$1 AND organizacion_id=$2 LIMIT 1',
+      [email, orgId]
+    );
+    const user = rows[0];
+    if (!user) return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
+
+    if (!looksLikeBcryptHash(user.password)) {
+      return res.status(403).json({ ok: false, error: 'Password legacy invalido, contacta soporte' });
+    }
+
+    const ok = await bcrypt.compare(old_password, user.password);
+    if (!ok) return res.status(401).json({ ok: false, error: 'Password actual incorrecto' });
+
+    const hashed = await bcrypt.hash(new_password, 12);
+    await req.db.query(
+      'UPDATE usuarios SET password=$1 WHERE email=$2 AND organizacion_id=$3',
+      [hashed, email, orgId]
+    );
+
+    // Opcional: invalidar tokens viejos guardando jti en blacklist
+    return res.json({ ok: true, message: 'Password actualizada' });
+  } catch (err) {
+    console.error('[changePassword]', err?.message);
+    return res.status(500).json({ ok: false, error: 'Error al cambiar password' });
+  }
+};
+
+/* =========================
    POST /auth/register
    ========================= */
 exports.register = async (req, res) => {

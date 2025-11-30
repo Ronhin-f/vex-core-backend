@@ -29,8 +29,16 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const changePassLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000, // 30 min
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 router.post('/login', loginLimiter, logLogin, authController.login);
 router.post('/register', registerLimiter, authController.register);
+router.post('/change-password', changePassLimiter, authController.requireAuth, authController.changePassword);
 
 // Diagnostico de sesion
 router.get('/me', authController.requireAuth, authController.me);

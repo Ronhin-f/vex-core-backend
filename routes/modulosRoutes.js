@@ -26,10 +26,8 @@ router.get('/:nombre/config', requireAuth, modulos.getModuloConfig);
 // Estado puntual
 router.get('/:nombre', requireAuth, modulos.getModuloByNombre);
 
-// Owner toggle (superadmin pasa por bypass)
-router.post('/toggle', requireAuth, requireRole('owner'), modulos.ownerToggle);
-
-// Superadmin toggle
+// Solo superadmin habilita/deshabilita modulos
+router.post('/toggle', requireAuth, requireRole('superadmin'), modulos.ownerToggle);
 router.post('/superadmin', requireAuth, requireRole('superadmin'), modulos.superToggle);
 
 module.exports = router;
