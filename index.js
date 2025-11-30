@@ -12,6 +12,7 @@ const modulosRoutes = require('./routes/modulosRoutes');
 const usuariosRoutes = require('./routes/usuariosRoutes');
 const organizacionesRoutes = require('./routes/organizacionesRoutes');
 const superadminRoutes = require('./routes/superadminRoutes');
+const perfilRoutes = require('./routes/perfilRoutes');
 // Failsafe directo para introspect
 const { introspect } = require('./controllers/authController');
 
@@ -122,6 +123,9 @@ app.use('/organizaciones', organizacionesRoutes);
 
 app.use('/api/superadmin', superadminRoutes);
 app.use('/superadmin', superadminRoutes);
+
+app.use('/api/perfil', perfilRoutes);
+app.use('/perfil', perfilRoutes);
 
 /* ============== 404 =============== */
 app.use((req, res) => {
