@@ -14,7 +14,9 @@ function normalizeUser(decoded) {
     organizacion_id: decoded.organizacion_id ?? decoded.org_id ?? null,
     nombre: decoded.nombre ?? decoded.name ?? null,
   };
-  if (isSuperadminEmail(base.email)) base.rol = 'superadmin';
+  const isSa = isSuperadminEmail(base.email);
+  if (isSa) base.rol = 'superadmin';
+  base.isSuperadmin = isSa || base.rol === 'superadmin';
   return base;
 }
 
@@ -53,6 +55,7 @@ function requireRole(...roles) {
   return (req, res, next) => {
     const u = req.user || req.usuario;
     if (!u) return res.status(401).json({ error: 'No autenticado' });
+    if (u.rol === 'superadmin' || u.isSuperadmin) return next();
     if (!roles.includes(u.rol)) {
       return res.status(403).json({ error: 'No autorizado' });
     }

@@ -3,11 +3,13 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { isSuperadminEmail } = require('../config/superadmins');
+const { requireAuth, requireRole } = require('../middlewares/auth');
 
 const { JWT_SECRET } = process.env;
-if (!JWT_SECRET) throw new Error('JWT_SECRET no está definido en el entorno.');
+if (!JWT_SECRET) throw new Error('JWT_SECRET no esta definido en el entorno.');
 
 const AUTH_DEBUG = process.env.AUTH_DEBUG === '1';
+const ALLOW_PLAIN_PASSWORD = process.env.AUTH_ALLOW_PLAIN === '1';
 
 function extractDomain(email = '') {
   const m = String(email).toLowerCase().trim().match(/@([^@]+)$/);
@@ -22,47 +24,12 @@ function looksLikeBcryptHash(s) {
 function dbg(...args) { if (AUTH_DEBUG) console.log('[AUTH_DEBUG]', ...args); }
 function warn(...args) { console.warn('[AUTH_WARN]', ...args); }
 
-/* =========================
-   JWT / Auth middlewares
-   ========================= */
-exports.requireAuth = (req, res, next) => {
-  try {
-    const h = req.headers.authorization || '';
-    const token = h.startsWith('Bearer ') ? h.slice(7) : null;
-    if (!token) return res.status(401).json({ ok: false, error: 'NO_TOKEN' });
-
-    const payload = jwt.verify(token, JWT_SECRET);
-    // payload esperado: { email, rol, organizacion_id, nombre }
-    const email = normEmail(payload.email || '');
-    const rol = payload.rol || 'user';
-
-    req.user = {
-      email,
-      rol,
-      organizacion_id: payload.organizacion_id,
-      nombre: payload.nombre,
-      isSuperadmin: rol === 'superadmin' || isSuperadminEmail(email),
-    };
-    if (AUTH_DEBUG) dbg('requireAuth user=', req.user);
-    return next();
-  } catch (e) {
-    if (AUTH_DEBUG) console.error('[AUTH_DEBUG] requireAuth error:', e?.message);
-    return res.status(401).json({ ok: false, error: 'INVALID_TOKEN' });
-  }
-};
-
-exports.requireRole = (...roles) => (req, res, next) => {
-  if (!req.user) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
-  // bypass por superadmin (rol o whitelist)
-  if (req.user.isSuperadmin) return next();
-  if (!roles.includes(req.user.rol)) {
-    return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
-  }
-  next();
-};
+// Reexportamos middlewares unicos
+exports.requireAuth = requireAuth;
+exports.requireRole = requireRole;
 
 /* =========================
-   Diagnóstico
+   Diagnostico
    ========================= */
 exports.me = (req, res) => {
   return res.json({ ok: true, user: req.user });
@@ -89,12 +56,10 @@ exports.introspect = (req, res) => {
     const email = normEmail(payload.email || payload.user_email || '');
     const org_id = payload.organizacion_id ?? payload.org_id ?? null;
 
-    // respetar superadmin
     let role = payload.rol || payload.role || 'user';
     if (isSuperadminEmail(email)) role = 'superadmin';
 
     return res.json({
-      // dejamos ambos flags por compatibilidad futura
       valid: true,
       active: true,
       user_email: email,
@@ -126,12 +91,12 @@ exports.login = async (req, res) => {
 
     if (!email || !password) {
       warn('LOGIN missing credentials', { hasEmail: !!email, hasPassword: !!password });
-      return res.status(400).json({ ok: false, error: 'Email y contraseña son requeridos' });
+      return res.status(400).json({ ok: false, error: 'Email y contrasena son requeridos' });
     }
 
     const emailEsSuperadmin = isSuperadminEmail(email);
 
-    // --- Rama con organización explícita
+    // --- Rama con organizacion explicita
     if (organizacion_id) {
       const r = await req.db.query(
         'SELECT * FROM usuarios WHERE email=$1 AND organizacion_id=$2 LIMIT 1',
@@ -139,10 +104,15 @@ exports.login = async (req, res) => {
       );
       const u = r.rows[0];
       dbg('LOGIN with org -> found:', !!u);
-      if (!u) return res.status(401).json({ ok: false, error: 'Credenciales inválidas' });
+      if (!u) return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
 
       const hashed = looksLikeBcryptHash(u.password);
       dbg('LOGIN compare (with org) hashed?', hashed, 'len:', u.password ? String(u.password).length : 0);
+
+      if (!hashed && !ALLOW_PLAIN_PASSWORD) {
+        warn('LOGIN insecure_password_storage (org)', { email, organizacion_id });
+        return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
+      }
 
       let ok = false;
       try {
@@ -153,7 +123,7 @@ exports.login = async (req, res) => {
 
       if (!ok) {
         warn('LOGIN compare_failed (with org)', { email, method: hashed ? 'bcrypt' : 'plain-eq' });
-        return res.status(401).json({ ok: false, error: 'Credenciales inválidas' });
+        return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
       }
 
       const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
@@ -163,20 +133,24 @@ exports.login = async (req, res) => {
       return res.json({ ok: true, token, user: payload, userEncoded: encodeURIComponent(JSON.stringify(payload)) });
     }
 
-    // --- Sin organización explícita
+    // --- Sin organizacion explicita
     const all = await req.db.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     dbg('LOGIN no-org rows:', all.rowCount);
 
     if (all.rowCount === 0) {
       warn('LOGIN user_not_found', { email });
-      return res.status(401).json({ ok: false, error: 'Credenciales inválidas' });
+      return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
     }
 
     if (all.rowCount > 1) {
-      // ⚠️ Seguridad: validar contraseña antes de listar organizaciones
+      // Seguridad: validar contrasena antes de listar organizaciones
       let passwordMatch = false;
       for (const u of all.rows) {
         const hashed = looksLikeBcryptHash(u.password);
+        if (!hashed && !ALLOW_PLAIN_PASSWORD) {
+          warn('LOGIN insecure_password_storage (multi)', { email, org: u.organizacion_id });
+          continue;
+        }
         try {
           const ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password);
           if (ok) { passwordMatch = true; break; }
@@ -186,7 +160,7 @@ exports.login = async (req, res) => {
       }
       if (!passwordMatch) {
         warn('LOGIN compare_failed (multi-org)');
-        return res.status(401).json({ ok: false, error: 'Credenciales inválidas' });
+        return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
       }
 
       const { rows: opciones } = await req.db.query(
@@ -206,10 +180,15 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Única organización
+    // Unica organizacion
     const u = all.rows[0];
     const hashed = looksLikeBcryptHash(u.password);
     dbg('LOGIN compare hashed?', hashed, 'len:', u.password ? String(u.password).length : 0);
+
+    if (!hashed && !ALLOW_PLAIN_PASSWORD) {
+      warn('LOGIN insecure_password_storage (single)', { email, org: u.organizacion_id });
+      return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
+    }
 
     let ok = false;
     try { ok = hashed ? await bcrypt.compare(password, u.password) : (password === u.password); }
@@ -217,7 +196,7 @@ exports.login = async (req, res) => {
 
     if (!ok) {
       warn('LOGIN compare_failed', { email, method: hashed ? 'bcrypt' : 'plain-eq' });
-      return res.status(401).json({ ok: false, error: 'Credenciales inválidas' });
+      return res.status(401).json({ ok: false, error: 'Credenciales invalidas' });
     }
 
     const rolFinal = emailEsSuperadmin ? 'superadmin' : u.rol;
@@ -229,7 +208,7 @@ exports.login = async (req, res) => {
   } catch (error) {
     warn('LOGIN unhandled error:', error?.message);
     if (process.env.NODE_ENV !== 'production') console.error('[authController/login] Error:', error);
-    res.status(500).json({ ok: false, error: 'Error interno al iniciar sesión' });
+    res.status(500).json({ ok: false, error: 'Error interno al iniciar sesion' });
   }
 };
 
@@ -255,14 +234,14 @@ exports.register = async (req, res) => {
 
     if (!email || !password || !nombre) {
       warn('REGISTER missing fields', { hasEmail: !!email, hasPassword: !!password, hasNombre: !!nombre });
-      return res.status(400).json({ ok: false, error: 'Faltan datos: nombre, email y contraseña son obligatorios' });
+      return res.status(400).json({ ok: false, error: 'Faltan datos: nombre, email y contrasena son obligatorios' });
     }
     if (password.length < 8) {
-      return res.status(400).json({ ok: false, error: 'La contraseña debe tener al menos 8 caracteres' });
+      return res.status(400).json({ ok: false, error: 'La contrasena debe tener al menos 8 caracteres' });
     }
 
     const dom = extractDomain(email);
-    if (!dom) return res.status(400).json({ ok: false, error: 'Email inválido' });
+    if (!dom) return res.status(400).json({ ok: false, error: 'Email invalido' });
 
     let isPublicDomain = false;
     try {
@@ -329,7 +308,7 @@ exports.register = async (req, res) => {
     if (dupe.rowCount) {
       await client.query('ROLLBACK');
       warn('REGISTER duplicate', { email, organizacion_id });
-      return res.status(409).json({ ok: false, error: 'El email ya existe en esa organización' });
+      return res.status(409).json({ ok: false, error: 'El email ya existe en esa organizacion' });
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -345,7 +324,7 @@ exports.register = async (req, res) => {
     dbg('REGISTER success', { email, rol, organizacion_id, createdOrgNow });
     return res.status(201).json({
       ok: true,
-      message: 'Usuario registrado con éxito',
+      message: 'Usuario registrado con exito',
       usuario: rows[0],
       onboarding: { dominio: dom, posible_org_por_dominio: !isPublicDomain }
     });
@@ -357,7 +336,7 @@ exports.register = async (req, res) => {
     }
 
     if (error?.code === '23505') return res.status(409).json({ ok: false, error: 'El email ya existe' });
-    if (error?.code === '23503') return res.status(400).json({ ok: false, error: 'Organización inválida' });
+    if (error?.code === '23503') return res.status(400).json({ ok: false, error: 'Organizacion invalida' });
 
     return res.status(500).json({ ok: false, error: 'Error interno al registrar usuario' });
   } finally {

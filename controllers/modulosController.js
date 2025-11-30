@@ -2,7 +2,7 @@
 const MOD_DEBUG = process.env.MODULOS_DEBUG === '1';
 const dbg = (...a) => MOD_DEBUG && console.log('[MODULOS]', ...a);
 
-const ALLOWED = new Set(['crm', 'stock', 'flows']); // módulos soportados
+const ALLOWED = new Set(['crm', 'stock', 'flows']); // modulos soportados
 
 function normName(s = '') {
   return String(s).trim().toLowerCase();
@@ -32,7 +32,7 @@ exports.getModulos = async (req, res) => {
   try {
     const orgId = req.user?.organizacion_id;
     if (!orgId) {
-      dbg('getModulos: user sin organizacion_id → {crm:false,stock:false,flows:false}');
+      dbg('getModulos: user sin organizacion_id -> {crm:false,stock:false,flows:false}');
       return res.json({ crm: false, stock: false, flows: false });
     }
 
@@ -48,7 +48,7 @@ exports.getModulos = async (req, res) => {
     return res.json(obj);
   } catch (e) {
     console.error('[getModulos] Error:', e?.message);
-    return res.status(500).json({ error: 'No se pudieron cargar los módulos' });
+    return res.status(500).json({ error: 'No se pudieron cargar los modulos' });
   }
 };
 
@@ -60,11 +60,11 @@ exports.getModuloByNombre = async (req, res) => {
   try {
     const orgId = req.user?.organizacion_id;
     const nombreRaw = req.params?.nombre;
-    if (!nombreRaw) return res.status(400).json({ error: 'Nombre de módulo requerido' });
+    if (!nombreRaw) return res.status(400).json({ error: 'Nombre de modulo requerido' });
 
     const nombre = normName(nombreRaw);
     if (!ALLOWED.has(nombre)) {
-      return res.status(400).json({ error: 'Módulo inválido' });
+      return res.status(400).json({ error: 'Modulo invalido' });
     }
 
     if (!orgId) return res.json({ nombre, habilitado: false });
@@ -82,12 +82,12 @@ exports.getModuloByNombre = async (req, res) => {
     return res.json({ nombre, habilitado });
   } catch (e) {
     console.error('[getModuloByNombre] Error:', e?.message);
-    return res.status(500).json({ error: 'Error al verificar módulo' });
+    return res.status(500).json({ error: 'Error al verificar modulo' });
   }
 };
 
 /**
- * POST /modulos/toggle  (owner en su propia organización)
+ * POST /modulos/toggle  (owner en su propia organizacion)
  * Body: { nombre: string, habilitado: boolean }
  * Rutas: requireAuth + requireRole('owner')
  */
@@ -96,14 +96,14 @@ exports.ownerToggle = async (req, res) => {
     const orgId = req.user?.organizacion_id;
     let { nombre, habilitado } = req.body || {};
 
-    if (!orgId) return res.status(401).json({ error: 'No autorizado: falta organización' });
+    if (!orgId) return res.status(401).json({ error: 'No autorizado: falta organizacion' });
     if (!nombre || typeof habilitado !== 'boolean') {
-      return res.status(400).json({ error: 'Parámetros inválidos' });
+      return res.status(400).json({ error: 'Parametros invalidos' });
     }
 
     nombre = normName(nombre);
     if (!ALLOWED.has(nombre)) {
-      return res.status(400).json({ error: 'Módulo inválido' });
+      return res.status(400).json({ error: 'Modulo invalido' });
     }
 
     const q = `
@@ -126,12 +126,12 @@ exports.ownerToggle = async (req, res) => {
     return res.json({ ok: true, modulo: { nombre: String(row.nombre), habilitado: !!row.habilitado } });
   } catch (e) {
     console.error('[ownerToggle] Error:', e?.message);
-    return res.status(500).json({ error: 'No se pudo actualizar el módulo' });
+    return res.status(500).json({ error: 'No se pudo actualizar el modulo' });
   }
 };
 
 /**
- * POST /modulos/superadmin  (puede tocar cualquier organización)
+ * POST /modulos/superadmin  (puede tocar cualquier organizacion)
  * Body: { organizacion_id: number, nombre: string, habilitado: boolean }
  * Rutas: requireAuth + requireRole('superadmin')
  */
@@ -139,12 +139,12 @@ exports.superToggle = async (req, res) => {
   try {
     let { organizacion_id, nombre, habilitado } = req.body || {};
     if (!organizacion_id || !nombre || typeof habilitado !== 'boolean') {
-      return res.status(400).json({ error: 'Parámetros inválidos' });
+      return res.status(400).json({ error: 'Parametros invalidos' });
     }
 
     nombre = normName(nombre);
     if (!ALLOWED.has(nombre)) {
-      return res.status(400).json({ error: 'Módulo inválido' });
+      return res.status(400).json({ error: 'Modulo invalido' });
     }
 
     const q = `
@@ -167,13 +167,13 @@ exports.superToggle = async (req, res) => {
     return res.json({ ok: true, modulo: { nombre: String(row.nombre), habilitado: !!row.habilitado } });
   } catch (e) {
     console.error('[superToggle] Error:', e?.message);
-    return res.status(500).json({ error: 'No se pudo actualizar el módulo' });
+    return res.status(500).json({ error: 'No se pudo actualizar el modulo' });
   }
 };
 
 /**
  * GET /modulos/:nombre/config
- * Lee la configuración del módulo desde system_settings (key = nombre).
+ * Lee la configuracion del modulo desde system_settings (key = nombre).
  * Esperado en DB (ej. flows): { fe_url: string, api_base: string }
  */
 exports.getModuloConfig = async (req, res) => {
@@ -204,6 +204,6 @@ exports.getModuloConfig = async (req, res) => {
   }
 };
 
-/** Aliases para compatibilidad con código viejo */
+/** Aliases para compatibilidad con codigo viejo */
 exports.getMisModulos = exports.getModulos;              // antes usabas este nombre
 exports.toggleModuloSuperadmin = exports.superToggle;    // alias viejo
