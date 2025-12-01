@@ -39,6 +39,7 @@ function dbg(...args) { if (AUTH_DEBUG) console.log('[AUTH_DEBUG]', ...args); }
 function warn(...args) { console.warn('[AUTH_WARN]', ...args); }
 
 const VERTICALES_PERMITIDAS = [
+  'general',
   'salud',
   'servicios',
   'software',

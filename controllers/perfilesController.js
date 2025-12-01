@@ -2,6 +2,7 @@
 const { isSuperadminEmail } = require('../config/superadmins');
 
 const VERTICALES_PERMITIDAS = [
+  'general',
   'salud',
   'servicios',
   'software',
