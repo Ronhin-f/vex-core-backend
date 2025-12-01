@@ -26,8 +26,10 @@ router.get('/:nombre/config', requireAuth, modulos.getModuloConfig);
 // Estado puntual
 router.get('/:nombre', requireAuth, modulos.getModuloByNombre);
 
-// Solo superadmin habilita/deshabilita modulos
-router.post('/toggle', requireAuth, requireRole('superadmin'), modulos.ownerToggle);
+// Owner puede activar/desactivar en su org (superadmin tambien pasa)
+router.post('/toggle', requireAuth, requireRole('owner'), modulos.ownerToggle);
+
+// Solo superadmin habilita/deshabilita modulos en otra org
 router.post('/superadmin', requireAuth, requireRole('superadmin'), modulos.superToggle);
 
 module.exports = router;
