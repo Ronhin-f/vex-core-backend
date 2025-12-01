@@ -29,6 +29,15 @@ const app = express();
 // Aceptamos proxy inverso (Railway) para IP real y cookies seguras
 app.set('trust proxy', 1);
 
+// Evitamos 304/ETag para que Axios no reciba respuestas vacías cacheadas
+app.disable('etag');
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 /* ================================
    CORS (arriba y con Vary: Origin)
    ================================ */
