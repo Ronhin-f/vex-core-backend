@@ -1,6 +1,20 @@
 // controllers/perfilesController.js
 const { isSuperadminEmail } = require('../config/superadmins');
 
+const VERTICALES_PERMITIDAS = [
+  'salud',
+  'servicios',
+  'software',
+  'educacion',
+  'retail',
+  'logistica',
+  'manufactura',
+  'finanzas',
+  'agro',
+  'consultoria',
+  'otros',
+];
+
 function normEmail(s = '') {
   return String(s).trim().toLowerCase();
 }
@@ -31,6 +45,23 @@ function validateColor(value) {
   return null;
 }
 
+function normalizeAreaVertical(value) {
+  if (value === undefined || value === null) return null;
+  const v = String(value).trim().toLowerCase();
+  if (!v) return null;
+  if (VERTICALES_PERMITIDAS.includes(v)) return v;
+  return null;
+}
+
+function normalizeFlag(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean') return value;
+  const v = String(value).trim().toLowerCase();
+  if (['1', 'true', 'si', 'on', 'yes'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off'].includes(v)) return false;
+  return null;
+}
+
 async function getBaseUser(req, email, orgId) {
   const { rows } = await req.db.query(
     `SELECT email, nombre, rol
@@ -55,7 +86,7 @@ exports.getPerfilOrganizacion = async (req, res) => {
     if (!baseOrg) return res.status(404).json({ error: 'Organizacion no encontrada' });
 
     const { rows } = await req.db.query(
-      `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, updated_at
+      `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at
          FROM organizacion_perfil
         WHERE organizacion_id = $1
         LIMIT 1`,
@@ -74,6 +105,8 @@ exports.getPerfilOrganizacion = async (req, res) => {
         brand_color: perfil?.brand_color || null,
         idioma: perfil?.idioma || null,
         timezone: perfil?.timezone || null,
+        area_vertical: perfil?.area_vertical || null,
+        habilita_historias_clinicas: !!perfil?.habilita_historias_clinicas,
         updated_at: perfil?.updated_at || null,
       },
       base: { nombre: baseOrg.nombre, estado: baseOrg.estado },
@@ -103,6 +136,8 @@ exports.updatePerfilOrganizacion = async (req, res) => {
     const brand_color = validateColor(req.body?.brand_color);
     const idioma = cleanText(req.body?.idioma, 8);
     const timezone = cleanText(req.body?.timezone, 64);
+    const area_vertical = normalizeAreaVertical(req.body?.area_vertical);
+    const habilita_historias_clinicas = normalizeFlag(req.body?.habilita_historias_clinicas);
 
     const org = await req.db.query(
       'SELECT nombre FROM organizaciones WHERE id = $1 LIMIT 1',
@@ -116,8 +151,8 @@ exports.updatePerfilOrganizacion = async (req, res) => {
     }
 
     const upsert = `
-      INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), NOW())
       ON CONFLICT (organizacion_id)
       DO UPDATE SET
         nombre_publico = EXCLUDED.nombre_publico,
@@ -125,8 +160,10 @@ exports.updatePerfilOrganizacion = async (req, res) => {
         brand_color = EXCLUDED.brand_color,
         idioma = EXCLUDED.idioma,
         timezone = EXCLUDED.timezone,
+        area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
+        habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
         updated_at = NOW()
-      RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, updated_at;
+      RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at;
     `;
 
     const { rows } = await req.db.query(upsert, [
@@ -136,6 +173,8 @@ exports.updatePerfilOrganizacion = async (req, res) => {
       brand_color,
       idioma,
       timezone,
+      area_vertical,
+      habilita_historias_clinicas === null ? null : !!habilita_historias_clinicas,
     ]);
 
     const perfil = rows[0];
@@ -257,3 +296,5 @@ exports.updatePerfilUsuario = async (req, res) => {
     return res.status(500).json({ error: 'Error al actualizar perfil de usuario' });
   }
 };
+
+

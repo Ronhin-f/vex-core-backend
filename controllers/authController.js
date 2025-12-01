@@ -38,6 +38,37 @@ function looksLikeBcryptHash(s) {
 function dbg(...args) { if (AUTH_DEBUG) console.log('[AUTH_DEBUG]', ...args); }
 function warn(...args) { console.warn('[AUTH_WARN]', ...args); }
 
+const VERTICALES_PERMITIDAS = [
+  'salud',
+  'servicios',
+  'software',
+  'educacion',
+  'retail',
+  'logistica',
+  'manufactura',
+  'finanzas',
+  'agro',
+  'consultoria',
+  'otros',
+];
+
+function normalizeAreaVertical(value) {
+  if (value === undefined || value === null) return null;
+  const v = String(value).trim().toLowerCase();
+  if (!v) return null;
+  if (VERTICALES_PERMITIDAS.includes(v)) return v;
+  return null;
+}
+
+function normalizeFlag(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean') return value;
+  const v = String(value).trim().toLowerCase();
+  if (['1', 'true', 'si', 'on', 'yes'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off'].includes(v)) return false;
+  return null;
+}
+
 // Reexportamos middlewares unicos
 exports.requireAuth = requireAuth;
 exports.requireRole = requireRole;
@@ -289,6 +320,8 @@ exports.register = async (req, res) => {
 
     let { email, password, nombre, rol } = req.body || {};
     let { organizacion_id, organizacion, nombre_organizacion } = req.body || {};
+    const areaVerticalReq = normalizeAreaVertical(req.body?.area_vertical);
+    const habilitaHistoriasReq = normalizeFlag(req.body?.habilita_historias_clinicas);
 
     email = normEmail(email);
     nombre = String(nombre || '').trim();
@@ -320,6 +353,7 @@ exports.register = async (req, res) => {
     await client.query('BEGIN');
 
     let createdOrgNow = false;
+    let orgNombreCreada = null;
 
     if (!organizacion_id) {
       let domRow = { rowCount: 0, rows: [] };
@@ -342,6 +376,7 @@ exports.register = async (req, res) => {
         );
         organizacion_id = orgIns.rows[0].id;
         createdOrgNow = true;
+        orgNombreCreada = orgName;
 
         const token = crypto.randomBytes(12).toString('hex');
         try {
@@ -354,12 +389,14 @@ exports.register = async (req, res) => {
           if (e?.code !== '42P01') throw e;
         }
       } else {
+        const orgNamePersonal = `${nombre} (Personal)`;
         const orgIns = await client.query(
           `INSERT INTO organizaciones (nombre, estado) VALUES ($1, 'active') RETURNING id`,
-          [`${nombre} (Personal)`]
+          [orgNamePersonal]
         );
         organizacion_id = orgIns.rows[0].id;
         createdOrgNow = true;
+        orgNombreCreada = orgNamePersonal;
       }
     }
 
@@ -383,6 +420,30 @@ exports.register = async (req, res) => {
       RETURNING email, nombre, rol, organizacion_id
     `;
     const { rows } = await client.query(insert, [email, hashed, nombre, rol, organizacion_id]);
+
+    if (createdOrgNow) {
+      const finalNombreOrg = orgNombreCreada || organizacion || nombre_organizacion || nombre || 'Organizacion';
+      try {
+        await client.query(
+          `INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, area_vertical, habilita_historias_clinicas, updated_at)
+           VALUES ($1, $2, $3, COALESCE($4, false), NOW())
+           ON CONFLICT (organizacion_id)
+           DO UPDATE SET
+             nombre_publico = COALESCE(organizacion_perfil.nombre_publico, EXCLUDED.nombre_publico),
+             area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
+             habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+             updated_at = NOW()`,
+          [
+            organizacion_id,
+            finalNombreOrg,
+            areaVerticalReq,
+            habilitaHistoriasReq === null ? null : !!habilitaHistoriasReq,
+          ]
+        );
+      } catch (e) {
+        if (e?.code !== '42P01') throw e; // tabla aun no migrada
+      }
+    }
 
     await client.query('COMMIT');
 
