@@ -54,6 +54,22 @@ const VERTICALES_PERMITIDAS = [
   'otros',
 ];
 
+let cachedVetFlags = null;
+async function supportsVetFlags(db) {
+  if (cachedVetFlags !== null) return cachedVetFlags;
+  try {
+    await db.query('SELECT habilita_ficha_mascotas, habilita_recordatorios_vacunas FROM organizacion_perfil LIMIT 1');
+    cachedVetFlags = true;
+  } catch (e) {
+    if (e?.code === '42703') {
+      cachedVetFlags = false;
+    } else {
+      throw e;
+    }
+  }
+  return cachedVetFlags;
+}
+
 function normalizeAreaVertical(value) {
   if (value === undefined || value === null) return null;
   const v = String(value).trim().toLowerCase();
@@ -427,29 +443,49 @@ exports.register = async (req, res) => {
 
     if (createdOrgNow) {
       const finalNombreOrg = orgNombreCreada || organizacion || nombre_organizacion || nombre || 'Organizacion';
+      const vetFlags = await supportsVetFlags(client);
       try {
-        await client.query(
-          `INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at)
-           VALUES ($1, $2, $3, COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), NOW())
-           ON CONFLICT (organizacion_id)
-           DO UPDATE SET
-             nombre_publico = COALESCE(organizacion_perfil.nombre_publico, EXCLUDED.nombre_publico),
-             area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
-             habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
-             habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
-             habilita_recordatorios_vacunas = COALESCE(EXCLUDED.habilita_recordatorios_vacunas, organizacion_perfil.habilita_recordatorios_vacunas),
-             updated_at = NOW()`,
-          [
-            organizacion_id,
-            finalNombreOrg,
-            areaVerticalReq,
-            habilitaHistoriasReq === null ? null : !!habilitaHistoriasReq,
-            habilitaFichaMascotasReq === null ? null : !!habilitaFichaMascotasReq,
-            habilitaRecordatoriosVacunasReq === null ? null : !!habilitaRecordatoriosVacunasReq,
-          ]
-        );
+        if (vetFlags) {
+          await client.query(
+            `INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at)
+             VALUES ($1, $2, $3, COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), NOW())
+             ON CONFLICT (organizacion_id)
+             DO UPDATE SET
+               nombre_publico = COALESCE(organizacion_perfil.nombre_publico, EXCLUDED.nombre_publico),
+               area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
+               habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+               habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
+               habilita_recordatorios_vacunas = COALESCE(EXCLUDED.habilita_recordatorios_vacunas, organizacion_perfil.habilita_recordatorios_vacunas),
+               updated_at = NOW()`,
+            [
+              organizacion_id,
+              finalNombreOrg,
+              areaVerticalReq,
+              habilitaHistoriasReq === null ? null : !!habilitaHistoriasReq,
+              habilitaFichaMascotasReq === null ? null : !!habilitaFichaMascotasReq,
+              habilitaRecordatoriosVacunasReq === null ? null : !!habilitaRecordatoriosVacunasReq,
+            ]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, area_vertical, habilita_historias_clinicas, updated_at)
+             VALUES ($1, $2, $3, COALESCE($4, false), NOW())
+             ON CONFLICT (organizacion_id)
+             DO UPDATE SET
+               nombre_publico = COALESCE(organizacion_perfil.nombre_publico, EXCLUDED.nombre_publico),
+               area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
+               habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+               updated_at = NOW()`,
+            [
+              organizacion_id,
+              finalNombreOrg,
+              areaVerticalReq,
+              habilitaHistoriasReq === null ? null : !!habilitaHistoriasReq,
+            ]
+          );
+        }
       } catch (e) {
-        if (e?.code !== '42P01') throw e; // tabla aun no migrada
+        if (e?.code !== '42P01' && e?.code !== '42703') throw e; // tabla aun no migrada o columnas faltantes
       }
     }
 

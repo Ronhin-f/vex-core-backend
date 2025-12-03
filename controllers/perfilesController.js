@@ -17,6 +17,22 @@ const VERTICALES_PERMITIDAS = [
   'otros',
 ];
 
+let cachedVetFlags = null;
+async function supportsVetFlags(db) {
+  if (cachedVetFlags !== null) return cachedVetFlags;
+  try {
+    await db.query('SELECT habilita_ficha_mascotas, habilita_recordatorios_vacunas FROM organizacion_perfil LIMIT 1');
+    cachedVetFlags = true;
+  } catch (e) {
+    if (e?.code === '42703') {
+      cachedVetFlags = false;
+    } else {
+      throw e;
+    }
+  }
+  return cachedVetFlags;
+}
+
 function normEmail(s = '') {
   return String(s).trim().toLowerCase();
 }
@@ -87,15 +103,29 @@ exports.getPerfilOrganizacion = async (req, res) => {
     const baseOrg = org.rows[0];
     if (!baseOrg) return res.status(404).json({ error: 'Organizacion no encontrada' });
 
-    const { rows } = await req.db.query(
-      `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at
-         FROM organizacion_perfil
-        WHERE organizacion_id = $1
-        LIMIT 1`,
-      [orgId]
-    );
+    const vetFlags = await supportsVetFlags(req.db);
+    let perfil = null;
 
-    const perfil = rows[0] || null;
+    if (vetFlags) {
+      const { rows } = await req.db.query(
+        `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at
+           FROM organizacion_perfil
+          WHERE organizacion_id = $1
+          LIMIT 1`,
+        [orgId]
+      );
+      perfil = rows[0] || null;
+    } else {
+      const { rows } = await req.db.query(
+        `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at
+           FROM organizacion_perfil
+          WHERE organizacion_id = $1
+          LIMIT 1`,
+        [orgId]
+      );
+      perfil = rows[0] || null;
+    }
+
     const nombre_publico = perfil?.nombre_publico || baseOrg.nombre;
 
     return res.json({
@@ -109,8 +139,8 @@ exports.getPerfilOrganizacion = async (req, res) => {
         timezone: perfil?.timezone || null,
         area_vertical: perfil?.area_vertical || null,
         habilita_historias_clinicas: !!perfil?.habilita_historias_clinicas,
-        habilita_ficha_mascotas: !!perfil?.habilita_ficha_mascotas,
-        habilita_recordatorios_vacunas: !!perfil?.habilita_recordatorios_vacunas,
+        habilita_ficha_mascotas: vetFlags ? !!perfil?.habilita_ficha_mascotas : false,
+        habilita_recordatorios_vacunas: vetFlags ? !!perfil?.habilita_recordatorios_vacunas : false,
         updated_at: perfil?.updated_at || null,
       },
       base: { nombre: baseOrg.nombre, estado: baseOrg.estado },
@@ -156,36 +186,69 @@ exports.updatePerfilOrganizacion = async (req, res) => {
       return res.status(400).json({ error: 'No hay nombre valido para la organizacion' });
     }
 
-    const upsert = `
-      INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), NOW())
-      ON CONFLICT (organizacion_id)
-      DO UPDATE SET
-        nombre_publico = EXCLUDED.nombre_publico,
-        logo_url = EXCLUDED.logo_url,
-        brand_color = EXCLUDED.brand_color,
-        idioma = EXCLUDED.idioma,
-        timezone = EXCLUDED.timezone,
-        area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
-        habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
-        habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
-        habilita_recordatorios_vacunas = COALESCE(EXCLUDED.habilita_recordatorios_vacunas, organizacion_perfil.habilita_recordatorios_vacunas),
-        updated_at = NOW()
-      RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at;
-    `;
+    const vetFlags = await supportsVetFlags(req.db);
+    let upsert = '';
+    let params = [];
 
-    const { rows } = await req.db.query(upsert, [
-      orgId,
-      finalNombre,
-      logo_url,
-      brand_color,
-      idioma,
-      timezone,
-      area_vertical,
-      habilita_historias_clinicas === null ? null : !!habilita_historias_clinicas,
-      habilita_ficha_mascotas === null ? null : !!habilita_ficha_mascotas,
-      habilita_recordatorios_vacunas === null ? null : !!habilita_recordatorios_vacunas,
-    ]);
+    if (vetFlags) {
+      upsert = `
+        INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), NOW())
+        ON CONFLICT (organizacion_id)
+        DO UPDATE SET
+          nombre_publico = EXCLUDED.nombre_publico,
+          logo_url = EXCLUDED.logo_url,
+          brand_color = EXCLUDED.brand_color,
+          idioma = EXCLUDED.idioma,
+          timezone = EXCLUDED.timezone,
+          area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
+          habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+          habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
+          habilita_recordatorios_vacunas = COALESCE(EXCLUDED.habilita_recordatorios_vacunas, organizacion_perfil.habilita_recordatorios_vacunas),
+          updated_at = NOW()
+        RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at;
+      `;
+      params = [
+        orgId,
+        finalNombre,
+        logo_url,
+        brand_color,
+        idioma,
+        timezone,
+        area_vertical,
+        habilita_historias_clinicas === null ? null : !!habilita_historias_clinicas,
+        habilita_ficha_mascotas === null ? null : !!habilita_ficha_mascotas,
+        habilita_recordatorios_vacunas === null ? null : !!habilita_recordatorios_vacunas,
+      ];
+    } else {
+      upsert = `
+        INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), NOW())
+        ON CONFLICT (organizacion_id)
+        DO UPDATE SET
+          nombre_publico = EXCLUDED.nombre_publico,
+          logo_url = EXCLUDED.logo_url,
+          brand_color = EXCLUDED.brand_color,
+          idioma = EXCLUDED.idioma,
+          timezone = EXCLUDED.timezone,
+          area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
+          habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+          updated_at = NOW()
+        RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at;
+      `;
+      params = [
+        orgId,
+        finalNombre,
+        logo_url,
+        brand_color,
+        idioma,
+        timezone,
+        area_vertical,
+        habilita_historias_clinicas === null ? null : !!habilita_historias_clinicas,
+      ];
+    }
+
+    const { rows } = await req.db.query(upsert, params);
 
     const perfil = rows[0];
     return res.json({ ok: true, perfil });
