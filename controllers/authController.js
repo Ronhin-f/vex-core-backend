@@ -41,6 +41,7 @@ function warn(...args) { console.warn('[AUTH_WARN]', ...args); }
 const VERTICALES_PERMITIDAS = [
   'general',
   'salud',
+  'veterinaria',
   'servicios',
   'software',
   'educacion',
@@ -323,6 +324,8 @@ exports.register = async (req, res) => {
     let { organizacion_id, organizacion, nombre_organizacion } = req.body || {};
     const areaVerticalReq = normalizeAreaVertical(req.body?.area_vertical);
     const habilitaHistoriasReq = normalizeFlag(req.body?.habilita_historias_clinicas);
+    const habilitaFichaMascotasReq = normalizeFlag(req.body?.habilita_ficha_mascotas);
+    const habilitaRecordatoriosVacunasReq = normalizeFlag(req.body?.habilita_recordatorios_vacunas);
 
     email = normEmail(email);
     nombre = String(nombre || '').trim();
@@ -426,19 +429,23 @@ exports.register = async (req, res) => {
       const finalNombreOrg = orgNombreCreada || organizacion || nombre_organizacion || nombre || 'Organizacion';
       try {
         await client.query(
-          `INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, area_vertical, habilita_historias_clinicas, updated_at)
-           VALUES ($1, $2, $3, COALESCE($4, false), NOW())
+          `INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at)
+           VALUES ($1, $2, $3, COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), NOW())
            ON CONFLICT (organizacion_id)
            DO UPDATE SET
              nombre_publico = COALESCE(organizacion_perfil.nombre_publico, EXCLUDED.nombre_publico),
              area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
              habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+             habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
+             habilita_recordatorios_vacunas = COALESCE(EXCLUDED.habilita_recordatorios_vacunas, organizacion_perfil.habilita_recordatorios_vacunas),
              updated_at = NOW()`,
           [
             organizacion_id,
             finalNombreOrg,
             areaVerticalReq,
             habilitaHistoriasReq === null ? null : !!habilitaHistoriasReq,
+            habilitaFichaMascotasReq === null ? null : !!habilitaFichaMascotasReq,
+            habilitaRecordatoriosVacunasReq === null ? null : !!habilitaRecordatoriosVacunasReq,
           ]
         );
       } catch (e) {

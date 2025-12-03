@@ -4,6 +4,7 @@ const { isSuperadminEmail } = require('../config/superadmins');
 const VERTICALES_PERMITIDAS = [
   'general',
   'salud',
+  'veterinaria',
   'servicios',
   'software',
   'educacion',
@@ -87,7 +88,7 @@ exports.getPerfilOrganizacion = async (req, res) => {
     if (!baseOrg) return res.status(404).json({ error: 'Organizacion no encontrada' });
 
     const { rows } = await req.db.query(
-      `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at
+      `SELECT organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at
          FROM organizacion_perfil
         WHERE organizacion_id = $1
         LIMIT 1`,
@@ -108,6 +109,8 @@ exports.getPerfilOrganizacion = async (req, res) => {
         timezone: perfil?.timezone || null,
         area_vertical: perfil?.area_vertical || null,
         habilita_historias_clinicas: !!perfil?.habilita_historias_clinicas,
+        habilita_ficha_mascotas: !!perfil?.habilita_ficha_mascotas,
+        habilita_recordatorios_vacunas: !!perfil?.habilita_recordatorios_vacunas,
         updated_at: perfil?.updated_at || null,
       },
       base: { nombre: baseOrg.nombre, estado: baseOrg.estado },
@@ -139,6 +142,8 @@ exports.updatePerfilOrganizacion = async (req, res) => {
     const timezone = cleanText(req.body?.timezone, 64);
     const area_vertical = normalizeAreaVertical(req.body?.area_vertical);
     const habilita_historias_clinicas = normalizeFlag(req.body?.habilita_historias_clinicas);
+    const habilita_ficha_mascotas = normalizeFlag(req.body?.habilita_ficha_mascotas);
+    const habilita_recordatorios_vacunas = normalizeFlag(req.body?.habilita_recordatorios_vacunas);
 
     const org = await req.db.query(
       'SELECT nombre FROM organizaciones WHERE id = $1 LIMIT 1',
@@ -152,8 +157,8 @@ exports.updatePerfilOrganizacion = async (req, res) => {
     }
 
     const upsert = `
-      INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), NOW())
+      INSERT INTO organizacion_perfil (organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), NOW())
       ON CONFLICT (organizacion_id)
       DO UPDATE SET
         nombre_publico = EXCLUDED.nombre_publico,
@@ -163,8 +168,10 @@ exports.updatePerfilOrganizacion = async (req, res) => {
         timezone = EXCLUDED.timezone,
         area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
         habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
+        habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
+        habilita_recordatorios_vacunas = COALESCE(EXCLUDED.habilita_recordatorios_vacunas, organizacion_perfil.habilita_recordatorios_vacunas),
         updated_at = NOW()
-      RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, updated_at;
+      RETURNING organizacion_id, nombre_publico, logo_url, brand_color, idioma, timezone, area_vertical, habilita_historias_clinicas, habilita_ficha_mascotas, habilita_recordatorios_vacunas, updated_at;
     `;
 
     const { rows } = await req.db.query(upsert, [
@@ -176,6 +183,8 @@ exports.updatePerfilOrganizacion = async (req, res) => {
       timezone,
       area_vertical,
       habilita_historias_clinicas === null ? null : !!habilita_historias_clinicas,
+      habilita_ficha_mascotas === null ? null : !!habilita_ficha_mascotas,
+      habilita_recordatorios_vacunas === null ? null : !!habilita_recordatorios_vacunas,
     ]);
 
     const perfil = rows[0];
