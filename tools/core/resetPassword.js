@@ -88,7 +88,7 @@ module.exports = {
 
     const base = process.env.PASSWORD_RESET_URL_BASE || null;
     const resetUrl = base
-      ? `${String(base).replace(/\\/+$/, '')}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(
+      ? `${String(base).replace(/\/+$/, '')}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(
           email
         )}&org=${encodeURIComponent(String(orgId))}`
       : null;
