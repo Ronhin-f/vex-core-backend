@@ -2,6 +2,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const axios = require('axios');
 const { isSuperadminEmail } = require('../config/superadmins');
 const { requireAuth, requireRole } = require('../middlewares/auth');
 
@@ -14,6 +15,10 @@ const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'vex-core-clients';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
 const JWT_OPTS = { issuer: JWT_ISSUER, audience: JWT_AUDIENCE };
 const JWT_VERIFY_OPTIONS = { ...JWT_OPTS, algorithms: ['HS256'] };
+const RESET_TTL_MIN = Number(process.env.PASSWORD_RESET_TTL_MIN || 60);
+const RESET_URL_BASE = process.env.PASSWORD_RESET_URL_BASE || null;
+const RESET_WEBHOOK_URL = process.env.PASSWORD_RESET_WEBHOOK_URL || null;
+const RESET_WEBHOOK_SECRET = process.env.PASSWORD_RESET_WEBHOOK_SECRET || null;
 
 const ALLOW_PLAIN_PASSWORD = false;
 if (process.env.AUTH_ALLOW_PLAIN === '1') {
@@ -85,6 +90,42 @@ function normalizeFlag(value) {
   if (['1', 'true', 'si', 'on', 'yes'].includes(v)) return true;
   if (['0', 'false', 'no', 'off'].includes(v)) return false;
   return null;
+}
+
+function isStrongPassword(pw = '') {
+  return pw.length >= 12 && /[A-Za-z]/.test(pw) && /\d/.test(pw);
+}
+
+function hashResetToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+async function ensureResetTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      organizacion_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_password_resets_email_org ON password_resets (email, organizacion_id);
+    CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets (token_hash);
+  `);
+}
+
+async function getOrgOptionsByEmail(db, email) {
+  const { rows } = await db.query(
+    `SELECT u.organizacion_id, o.nombre AS organizacion_nombre
+       FROM usuarios u
+       JOIN organizaciones o ON o.id = u.organizacion_id
+      WHERE u.email = $1
+      ORDER BY o.nombre ASC`,
+    [email]
+  );
+  return rows || [];
 }
 
 // Reexportamos middlewares unicos
@@ -272,6 +313,182 @@ exports.login = async (req, res) => {
     warn('LOGIN unhandled error:', error?.message);
     if (process.env.NODE_ENV !== 'production') console.error('[authController/login] Error:', error);
     res.status(500).json({ ok: false, error: 'Error interno al iniciar sesion' });
+  }
+};
+
+/* =========================
+   POST /auth/password-reset/request
+   ========================= */
+exports.requestPasswordReset = async (req, res) => {
+  try {
+    let { email, organizacion_id, reset_url_base } = req.body || {};
+    email = normEmail(email);
+
+    if (organizacion_id !== undefined && organizacion_id !== null) {
+      const n = Number(organizacion_id);
+      organizacion_id = Number.isFinite(n) ? n : organizacion_id;
+    }
+
+    if (!email) {
+      return res.status(400).json({ ok: false, error: 'Email requerido' });
+    }
+
+    await ensureResetTable(req.db);
+
+    // Buscar org si no viene
+    if (!organizacion_id) {
+      const opciones = await getOrgOptionsByEmail(req.db, email);
+      if (opciones.length > 1) {
+        return res.status(409).json({
+          ok: false,
+          needs_org: true,
+          opciones,
+          error: 'El email pertenece a varias organizaciones. Seleccione una.',
+        });
+      }
+      if (opciones.length === 1) {
+        organizacion_id = opciones[0].organizacion_id;
+      }
+    }
+
+    // No revelar existencia de usuario
+    if (!organizacion_id) {
+      return res.json({ ok: true, message: 'Si el email existe, vas a recibir instrucciones.' });
+    }
+
+    const user = await req.db.query(
+      'SELECT 1 FROM usuarios WHERE email=$1 AND organizacion_id=$2 LIMIT 1',
+      [email, organizacion_id]
+    );
+    if (!user.rowCount) {
+      return res.json({ ok: true, message: 'Si el email existe, vas a recibir instrucciones.' });
+    }
+
+    // Invalidar tokens previos
+    await req.db.query(
+      'UPDATE password_resets SET used_at=now() WHERE email=$1 AND organizacion_id=$2 AND used_at IS NULL',
+      [email, organizacion_id]
+    );
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashResetToken(token);
+    const expiresAt = new Date(Date.now() + RESET_TTL_MIN * 60 * 1000);
+
+    await req.db.query(
+      `INSERT INTO password_resets (email, organizacion_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [email, organizacion_id, tokenHash, expiresAt]
+    );
+
+    let orgName = null;
+    try {
+      const orgRow = await req.db.query('SELECT nombre FROM organizaciones WHERE id=$1 LIMIT 1', [organizacion_id]);
+      orgName = orgRow.rows?.[0]?.nombre || null;
+    } catch {}
+
+    const base = reset_url_base || RESET_URL_BASE || null;
+    const resetUrl = base
+      ? `${String(base).replace(/\/+$/, '')}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(
+          email
+        )}&org=${encodeURIComponent(String(organizacion_id))}`
+      : null;
+
+    // Webhook opcional para enviar email
+    if (RESET_WEBHOOK_URL) {
+      try {
+        await axios.post(
+          RESET_WEBHOOK_URL,
+          {
+            email,
+            organizacion_id,
+            organizacion_nombre: orgName,
+            reset_url: resetUrl,
+            token,
+            expires_at: expiresAt.toISOString(),
+          },
+          {
+            headers: RESET_WEBHOOK_SECRET ? { "X-Webhook-Secret": RESET_WEBHOOK_SECRET } : undefined,
+            timeout: 8000,
+          }
+        );
+      } catch (e) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[password-reset webhook]', e?.message || e);
+        }
+      }
+    }
+
+    return res.json({ ok: true, message: 'Si el email existe, vas a recibir instrucciones.' });
+  } catch (e) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[password-reset request]', e?.message || e);
+    }
+    return res.status(500).json({ ok: false, error: 'Error interno al solicitar reset' });
+  }
+};
+
+/* =========================
+   POST /auth/password-reset/confirm
+   ========================= */
+exports.confirmPasswordReset = async (req, res) => {
+  try {
+    let { email, organizacion_id, token, new_password } = req.body || {};
+    email = normEmail(email);
+
+    if (organizacion_id !== undefined && organizacion_id !== null) {
+      const n = Number(organizacion_id);
+      organizacion_id = Number.isFinite(n) ? n : organizacion_id;
+    }
+
+    if (!email || !token || !new_password) {
+      return res.status(400).json({ ok: false, error: 'Faltan parametros' });
+    }
+    if (!isStrongPassword(new_password)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Password debe tener minimo 12 caracteres, letras y numeros',
+      });
+    }
+
+    await ensureResetTable(req.db);
+
+    if (!organizacion_id) {
+      const opciones = await getOrgOptionsByEmail(req.db, email);
+      if (opciones.length !== 1) {
+        return res.status(400).json({ ok: false, error: 'organizacion_id requerido' });
+      }
+      organizacion_id = opciones[0].organizacion_id;
+    }
+
+    const tokenHash = hashResetToken(token);
+    const r = await req.db.query(
+      `SELECT id, expires_at
+         FROM password_resets
+        WHERE email=$1 AND organizacion_id=$2 AND token_hash=$3 AND used_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [email, organizacion_id, tokenHash]
+    );
+    const row = r.rows[0];
+    if (!row) return res.status(400).json({ ok: false, error: 'Token invalido' });
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ ok: false, error: 'Token expirado' });
+    }
+
+    const hashed = await bcrypt.hash(new_password, 10);
+    await req.db.query(
+      'UPDATE usuarios SET password=$1 WHERE email=$2 AND organizacion_id=$3',
+      [hashed, email, organizacion_id]
+    );
+
+    await req.db.query('UPDATE password_resets SET used_at=now() WHERE id=$1', [row.id]);
+
+    return res.json({ ok: true, message: 'Password actualizada' });
+  } catch (e) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[password-reset confirm]', e?.message || e);
+    }
+    return res.status(500).json({ ok: false, error: 'Error interno al confirmar reset' });
   }
 };
 

@@ -36,9 +36,29 @@ const changePassLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const resetRequestLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000, // 30 min
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}|${String(req.body?.email || '').toLowerCase()}`,
+  message: { ok: false, error: 'Demasiadas solicitudes, probá más tarde' },
+});
+
+const resetConfirmLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000, // 30 min
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}|${String(req.body?.email || '').toLowerCase()}`,
+  message: { ok: false, error: 'Demasiados intentos, probá más tarde' },
+});
+
 router.post('/login', loginLimiter, logLogin, authController.login);
 router.post('/register', registerLimiter, authController.register);
 router.post('/change-password', changePassLimiter, authController.requireAuth, authController.changePassword);
+router.post('/password-reset/request', resetRequestLimiter, authController.requestPasswordReset);
+router.post('/password-reset/confirm', resetConfirmLimiter, authController.confirmPasswordReset);
 
 // Diagnostico de sesion
 router.get('/me', authController.requireAuth, authController.me);
