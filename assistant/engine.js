@@ -30,6 +30,17 @@ function extractQuantity(text) {
   return byNum ? Number(byNum[1]) : null;
 }
 
+function extractQuoted(text) {
+  const m = text.match(/["']([^"']+)["']/);
+  return m ? m[1].trim() : null;
+}
+
+function extractPhone(text) {
+  const m = text.match(/(\+?\d[\d\s\-()]{6,})/);
+  if (!m) return null;
+  return m[1].trim();
+}
+
 function extractRole(text) {
   if (/\\bowner\\b/.test(text)) return 'owner';
   if (/\\badmin\\b/.test(text)) return 'admin';
@@ -37,12 +48,54 @@ function extractRole(text) {
   return null;
 }
 
-function extractProductName(text) {
-  const quoted = text.match(/["']([^"']+)["']/);
-  if (quoted) return quoted[1].trim();
+function extractTaskTitle(text) {
+  const quoted = extractQuoted(text);
+  if (quoted) return quoted;
 
-  const m = text.match(/producto\\s+(?:nuevo\\s+)?(?:llamado\\s+)?([a-z0-9 \\-_]{3,})/i);
+  const m = text.match(/tarea\\s+(?:llamada\\s+)?([a-z0-9 \-_]{3,})/i);
   if (m) return m[1].trim();
+
+  const a = text.match(/(completa|completar|marca|marcar)\\s+(?:la\\s+)?(?:tarea\\s+)?(.+)/i);
+  if (a) {
+    const raw = a[2].replace(/\\b(hecha|lista)\\b/i, '').trim();
+    if (raw.length >= 2) return raw;
+  }
+
+  return null;
+}
+
+function extractClientName(text) {
+  const quoted = extractQuoted(text);
+  if (quoted) return quoted;
+
+  const m = text.match(/cliente\\s+(?:nuevo\\s+)?(?:llamado\\s+)?([a-z0-9 \-_]{3,})/i);
+  if (m) {
+    const raw = m[1].trim();
+    const cut = raw.split(/\\b(email|telefono|tel|estado|stage)\\b/i)[0];
+    return cut.trim() || raw;
+  }
+
+  const move = text.match(/(?:mover|pasar)\\s+(.+?)\\s+(?:a|al)\\s+/i);
+  if (move) {
+    const raw = move[1].trim();
+    if (raw.length >= 2) return raw;
+  }
+
+  return null;
+}
+
+function extractProductName(text) {
+  const quoted = extractQuoted(text);
+  if (quoted) return quoted.trim();
+
+  const m = text.match(/producto\\s+(?:nuevo\\s+)?(?:llamado\\s+)?([a-z0-9 \-_]{3,})/i);
+  if (m) return m[1].trim();
+
+  const a = text.match(/(?:movimiento|traslado|entrada|salida)\\s+(?:de\\s+)?([a-z0-9 \-_]{3,})/i);
+  if (a) {
+    const raw = a[1].trim();
+    if (/[a-z]/i.test(raw)) return raw;
+  }
 
   return null;
 }
@@ -88,6 +141,7 @@ function missingQuestion(field) {
     almacen_origen: 'Necesito el id del almacen de origen.',
     almacen_destino: 'Necesito el id del almacen de destino.',
     cantidad: 'Cuanta cantidad?',
+    nombre_cliente: 'Como se llama el cliente?',
   };
   return map[field] || 'Necesito mas datos para seguir.';
 }
@@ -104,11 +158,22 @@ function wantsCapabilities(text) {
 }
 
 function wantsCreateClient(text) {
-  if (text.includes('crear') || text.includes('nuevo') || text.includes('alta')) {
+  if (
+    text.includes('crear') ||
+    text.includes('crea') ||
+    text.includes('agregar') ||
+    text.includes('agrega') ||
+    text.includes('nuevo') ||
+    text.includes('alta')
+  ) {
     if (text.includes('cliente') || text.includes('lead')) return true;
   }
   if (text.includes('como') && (text.includes('cliente') || text.includes('lead'))) return true;
   return false;
+}
+
+function wantsStockTasks(text) {
+  return text.includes('tareas') && text.includes('stock');
 }
 
 function safeSummary(value, maxLen = 500) {
@@ -239,7 +304,19 @@ function parseIntent(message, context) {
     return { type: 'info', infoType: 'capabilities' };
   }
   if (wantsCreateClient(text)) {
-    return { type: 'info', infoType: 'create_client' };
+    return {
+      type: 'action',
+      toolName: 'crm.create_client',
+      inputs: {
+        nombre: extractClientName(text),
+        contacto_nombre: extractClientName(text),
+        email: extractEmail(text),
+        telefono: extractPhone(text),
+      },
+    };
+  }
+  if (wantsStockTasks(text)) {
+    return { type: 'info', infoType: 'stock_tasks' };
   }
 
   if (text.includes('reenviar') && text.includes('invit')) {
@@ -266,26 +343,34 @@ function parseIntent(message, context) {
     };
   }
 
-  if (text.includes('tarea') && (text.includes('hecha') || text.includes('completa') || text.includes('listo'))) {
+  if (text.includes('tarea') && (text.includes('hecha') || text.includes('completa') || text.includes('listo') || text.includes('marcar') || text.includes('marca'))) {
     return {
       type: 'action',
       toolName: 'crm.mark_task_done',
-      inputs: { task_id: extractId(text, 'tarea') || entityContext.taskId || null },
+      inputs: {
+        task_id: extractId(text, 'tarea') || entityContext.taskId || null,
+        task_title: extractTaskTitle(text),
+      },
     };
   }
 
-  if ((text.includes('lead') || text.includes('cliente')) && (text.includes('estado') || text.includes('stage'))) {
+  const stage = extractStage(text);
+  if ((text.includes('lead') || text.includes('cliente') || text.includes('mover') || text.includes('pasar')) && (text.includes('estado') || text.includes('stage') || stage)) {
     return {
       type: 'action',
       toolName: 'crm.change_lead_status',
       inputs: {
         lead_id: extractId(text, 'lead') || extractId(text, 'cliente') || entityContext.leadId || null,
-        stage: extractStage(text),
+        lead_name: extractClientName(text),
+        stage,
       },
     };
   }
 
-  if ((text.includes('crear') || text.includes('nuevo')) && text.includes('producto')) {
+  if (
+    (text.includes('crear') || text.includes('crea') || text.includes('agregar') || text.includes('agrega') || text.includes('nuevo')) &&
+    text.includes('producto')
+  ) {
     const almacenId = extractWarehouseId(text, 'almacen') || extractWarehouseId(text, 'deposito');
     return {
       type: 'action',
@@ -303,6 +388,7 @@ function parseIntent(message, context) {
       toolName: 'stock.register_movement',
       inputs: {
         producto_id: extractId(text, 'producto') || entityContext.productId || null,
+        producto_nombre: extractProductName(text),
         cantidad: extractQuantity(text),
         almacen_origen: origen,
         almacen_destino: destino,
@@ -329,6 +415,16 @@ async function handleInfo(intent, context) {
       text:
         'Todavia no puedo crear clientes desde el asistente. Hacelo desde Clientes: 1) Abrir Clientes 2) Nuevo cliente 3) Completar datos y guardar.',
       deep_link: cfg?.feBase ? joinUrl(cfg.feBase, '/clientes') : null,
+    };
+  }
+
+  if (intent.infoType === 'stock_tasks') {
+    const cfg = await resolveModuleConfig(context.db, 'stock');
+    return {
+      type: 'message',
+      text:
+        'No hay tareas de Stock en CRM. Si queres ver stock o movimientos, entra a Vex Stock.',
+      deep_link: cfg?.feBase ? joinUrl(cfg.feBase, '/') : null,
     };
   }
 
@@ -371,13 +467,15 @@ async function handleAction(intent, context) {
     return { type: 'error', text: planned.message || 'No puedo avanzar con eso.' };
   }
 
+  const actionInputs = planned.inputs || intent.inputs;
+
   const confirmToken = await createPendingAction(context.db, {
     orgId: context.orgId,
     userId: context.user?.id || null,
     userEmail: context.user?.email || null,
     moduleName: tool.module,
     toolName: tool.name,
-    inputs: intent.inputs,
+    inputs: actionInputs,
     preview: planned.preview || {},
   });
 
@@ -387,7 +485,7 @@ async function handleAction(intent, context) {
     userEmail: context.user?.email || null,
     moduleName: tool.module,
     toolName: tool.name,
-    inputs: intent.inputs,
+    inputs: actionInputs,
     result: { preview: planned.preview || {} },
   });
 

@@ -9,15 +9,16 @@ module.exports = {
   name: 'stock.register_movement',
   module: 'stock',
   action: 'register_movement',
-  required: ['producto_id', 'cantidad', 'almacen_origen', 'almacen_destino'],
+  required: ['cantidad', 'almacen_origen', 'almacen_destino'],
   async plan({ input, context }) {
     const productoId = toNum(input.producto_id);
+    const productoNombre = input.producto_nombre ? String(input.producto_nombre).trim() : null;
     const cantidad = Number(input.cantidad);
     const almacenOrigen = toNum(input.almacen_origen);
     const almacenDestino = toNum(input.almacen_destino);
 
-    if (!productoId) {
-      return { status: 'question', question: 'Necesito el id del producto.' };
+    if (!productoId && !productoNombre) {
+      return { status: 'question', question: 'Necesito el id o el nombre del producto.' };
     }
     if (!cantidad || cantidad <= 0) {
       return { status: 'question', question: 'Cuanta cantidad?' };
@@ -37,10 +38,51 @@ module.exports = {
       return { status: 'error', message: 'No tengo configurado el API de Stock.' };
     }
 
+    let finalProductId = productoId;
+    let producto = null;
+
+    if (!finalProductId && productoNombre) {
+      const list = await requestJson({
+        baseUrl: cfg.apiBase,
+        path: '/productos',
+        method: 'GET',
+        params: { q: productoNombre },
+        context,
+      });
+      const productos = Array.isArray(list) ? list : [];
+      const filtered = almacenOrigen
+        ? productos.filter((p) => Number(p?.almacen_id) === Number(almacenOrigen))
+        : productos;
+
+      if (!filtered.length) {
+        return { status: 'error', message: 'No encontre un producto con ese nombre en el almacen de origen.' };
+      }
+      const exact = filtered.filter(
+        (p) => String(p?.nombre || '').trim().toLowerCase() === productoNombre.toLowerCase()
+      );
+      const pick = exact.length === 1 ? exact[0] : filtered.length === 1 ? filtered[0] : null;
+      if (!pick) {
+        const listStr = filtered.slice(0, 5).map((p) => `#${p.id} - ${p.nombre}`).join(', ');
+        return {
+          status: 'question',
+          question: `Hay varios productos. Decime el id exacto. Ej: ${listStr}`,
+        };
+      }
+      finalProductId = toNum(pick.id);
+      producto = pick;
+    }
+
     return {
       status: 'ok',
+      inputs: {
+        producto_id: finalProductId,
+        cantidad,
+        almacen_origen: almacenOrigen,
+        almacen_destino: almacenDestino,
+      },
       preview: {
-        producto_id: productoId,
+        producto_id: finalProductId,
+        producto_nombre: producto?.nombre || productoNombre || null,
         cantidad,
         almacen_origen: almacenOrigen,
         almacen_destino: almacenDestino,

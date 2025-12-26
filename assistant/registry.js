@@ -3,6 +3,7 @@ const resendInvite = require('../tools/core/resendInvite');
 const resetPassword = require('../tools/core/resetPassword');
 const markTaskDone = require('../tools/crm/markTaskDone');
 const changeLeadStatus = require('../tools/crm/changeLeadStatus');
+const createClient = require('../tools/crm/createClient');
 const createProduct = require('../tools/stock/createProduct');
 const registerMovement = require('../tools/stock/registerMovement');
 
@@ -12,6 +13,7 @@ const tools = [
   resetPassword,
   markTaskDone,
   changeLeadStatus,
+  createClient,
   createProduct,
   registerMovement,
 ];
