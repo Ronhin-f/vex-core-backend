@@ -1,5 +1,12 @@
 const assistantEngine = require('../assistant/engine');
 
+function buildRequestId(req) {
+  if (req?.id) return req.id;
+  const ts = Date.now();
+  const rand = Math.floor(Math.random() * 1000000);
+  return `assist-${ts}-${rand}`;
+}
+
 exports.chat = async (req, res) => {
   try {
     const { message, confirm_token, currentModule, currentRoute, entityContext, userLocale } = req.body || {};
@@ -15,6 +22,8 @@ exports.chat = async (req, res) => {
         ? authHeader.slice(7).trim()
         : null;
 
+    const requestId = buildRequestId(req);
+
     const response = await assistantEngine.handleChat({
       message,
       confirm_token,
@@ -26,12 +35,28 @@ exports.chat = async (req, res) => {
         entityContext: entityContext || {},
         userLocale: userLocale || 'es-AR',
         db: req.db,
-        requestId: req.id,
+        requestId,
         authToken: token,
       },
     });
 
-    return res.json(response);
+    const debugEnabled =
+      String(process.env.ASSISTANT_DEBUG || '') === '1' ||
+      String(req.headers['x-assistant-debug'] || '') === '1';
+
+    if (!debugEnabled) {
+      return res.json(response);
+    }
+
+    return res.json({
+      ...response,
+      debug: {
+        request_id: requestId,
+        module: currentModule || 'core',
+        route: currentRoute || null,
+        response_type: response?.type || null,
+      },
+    });
   } catch (err) {
     if (process.env.NODE_ENV !== 'production') {
       console.error('[assistantController/chat]', err);
