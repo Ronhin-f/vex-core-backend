@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { getTool } = require('./registry');
 const { canPerform } = require('./policy');
 const { getSummary } = require('./summaries');
+const { resolveModuleConfig, joinUrl } = require('./remote');
 
 const CONFIRM_TTL_MIN = Number(process.env.ASSISTANT_CONFIRM_TTL_MIN || 15);
 
@@ -89,6 +90,25 @@ function missingQuestion(field) {
     cantidad: 'Cuanta cantidad?',
   };
   return map[field] || 'Necesito mas datos para seguir.';
+}
+
+function wantsCapabilities(text) {
+  return (
+    text.includes('que podes hacer') ||
+    text.includes('que puedes hacer') ||
+    text.includes('acciones disponibles') ||
+    text.includes('tareas realizables') ||
+    text.includes('ayuda') ||
+    text.includes('help')
+  );
+}
+
+function wantsCreateClient(text) {
+  if (text.includes('crear') || text.includes('nuevo') || text.includes('alta')) {
+    if (text.includes('cliente') || text.includes('lead')) return true;
+  }
+  if (text.includes('como') && (text.includes('cliente') || text.includes('lead'))) return true;
+  return false;
 }
 
 function safeSummary(value, maxLen = 500) {
@@ -212,6 +232,15 @@ function parseIntent(message, context) {
   if (text.includes('top 5') || (text.includes('top') && text.includes('hoy'))) {
     return { type: 'summary', summaryType: 'top5_today' };
   }
+  if (text.includes('tareas realizables') || (text.includes('tareas') && text.includes('hoy'))) {
+    return { type: 'summary', summaryType: 'top5_today' };
+  }
+  if (wantsCapabilities(text)) {
+    return { type: 'info', infoType: 'capabilities' };
+  }
+  if (wantsCreateClient(text)) {
+    return { type: 'info', infoType: 'create_client' };
+  }
 
   if (text.includes('reenviar') && text.includes('invit')) {
     return {
@@ -282,6 +311,31 @@ function parseIntent(message, context) {
   }
 
   return { type: 'help' };
+}
+
+async function handleInfo(intent, context) {
+  if (intent.infoType === 'capabilities') {
+    return {
+      type: 'message',
+      text:
+        'Puedo: invitar usuarios, reenviar invitaciones, resetear password, marcar tareas hechas, mover leads, crear productos, registrar movimientos y generar resumenes.',
+    };
+  }
+
+  if (intent.infoType === 'create_client') {
+    const cfg = await resolveModuleConfig(context.db, 'crm');
+    return {
+      type: 'message',
+      text:
+        'Todavia no puedo crear clientes desde el asistente. Hacelo desde Clientes: 1) Abrir Clientes 2) Nuevo cliente 3) Completar datos y guardar.',
+      deep_link: cfg?.feBase ? joinUrl(cfg.feBase, '/clientes') : null,
+    };
+  }
+
+  return {
+    type: 'message',
+    text: 'Decime que queres hacer.',
+  };
 }
 
 async function handleAction(intent, context) {
@@ -417,6 +471,10 @@ async function handleChat({ message, confirm_token, context }) {
 
   if (intent.type === 'summary') {
     return getSummary(context, intent.summaryType);
+  }
+
+  if (intent.type === 'info') {
+    return handleInfo(intent, context);
   }
 
   if (intent.type === 'action') {
