@@ -128,14 +128,19 @@ function extractStage(text) {
   return null;
 }
 
-function missingQuestion(field) {
+function missingQuestion(field, toolName) {
+  if (field === 'nombre') {
+    if (toolName === 'crm.create_client') return 'Como se llama el cliente?';
+    if (toolName === 'stock.create_product') return 'Como se llama el producto?';
+    return 'Como se llama?';
+  }
+
   const map = {
     email: 'Necesito el email del usuario.',
     rol: 'Que rol queres? (admin o user)',
     task_id: 'Necesito el id de la tarea.',
     lead_id: 'Necesito el id del lead.',
     stage: 'A que estado queres pasar el lead? (por ejemplo: Qualified, Won, Lost)',
-    nombre: 'Como se llama el producto?',
     almacen_id: 'Necesito el id del almacen para crear el producto.',
     producto_id: 'Necesito el id del producto.',
     almacen_origen: 'Necesito el id del almacen de origen.',
@@ -442,7 +447,7 @@ async function handleAction(intent, context) {
 
   const missing = (tool.required || []).filter((field) => !intent.inputs?.[field]);
   if (missing.length > 0) {
-    return { type: 'question', text: missingQuestion(missing[0]) };
+    return { type: 'question', text: missingQuestion(missing[0], tool.name) };
   }
 
   if (!canPerform(context.user, tool.action, tool.module)) {
