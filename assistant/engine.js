@@ -5,6 +5,7 @@ const { getSummary } = require('./summaries');
 const { resolveModuleConfig, joinUrl } = require('./remote');
 
 const CONFIRM_TTL_MIN = Number(process.env.ASSISTANT_CONFIRM_TTL_MIN || 15);
+const PENDING_TTL_MIN = Number(process.env.ASSISTANT_PENDING_TTL_MIN || 10);
 
 function normalizeText(input) {
   return String(input || '').toLowerCase();
@@ -243,6 +244,69 @@ async function createPendingAction(db, data) {
   return token;
 }
 
+async function createPendingQuestion(db, data) {
+  const expiresAt = new Date(Date.now() + PENDING_TTL_MIN * 60 * 1000);
+
+  await db.query(
+    `INSERT INTO assistant_pending_questions
+      (organizacion_id, user_id, user_email, module, tool_name, missing_field, inputs_json, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
+    [
+      data.orgId,
+      data.userId || null,
+      data.userEmail || null,
+      data.moduleName || null,
+      data.toolName || null,
+      data.missingField || null,
+      JSON.stringify(data.inputs || {}),
+      expiresAt,
+    ]
+  );
+}
+
+async function loadPendingQuestion(db, data) {
+  const { orgId, userId, userEmail } = data;
+  if (!orgId || (!userId && !userEmail)) return null;
+
+  const { rows } = await db.query(
+    `SELECT *
+       FROM assistant_pending_questions
+      WHERE organizacion_id = $1
+        AND status = 'pending'
+        AND (
+          (user_email IS NOT NULL AND user_email = $2) OR
+          (user_id IS NOT NULL AND user_id = $3)
+        )
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [orgId, userEmail || '', userId || '']
+  );
+
+  const row = rows[0] || null;
+  if (!row) return null;
+
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+    await db.query(
+      `UPDATE assistant_pending_questions
+          SET status = 'expired', resolved_at = now()
+        WHERE id = $1`,
+      [row.id]
+    );
+    return null;
+  }
+
+  return row;
+}
+
+async function markQuestionResolved(db, id) {
+  await db.query(
+    `UPDATE assistant_pending_questions
+        SET status = 'resolved', resolved_at = now()
+      WHERE id = $1`,
+    [id]
+  );
+}
+
 async function loadPendingAction(db, token, orgId) {
   const { rows } = await db.query(
     `SELECT *
@@ -404,6 +468,43 @@ function parseIntent(message, context) {
   return { type: 'help' };
 }
 
+function applyPendingInput(pending, message) {
+  const inputs = typeof pending.inputs_json === 'string' ? JSON.parse(pending.inputs_json) : (pending.inputs_json || {});
+  const field = pending.missing_field;
+  const toolName = pending.tool_name;
+  const raw = String(message || '').trim();
+
+  if (!raw) return { ok: false, inputs };
+
+  const numberFromText = (text) => {
+    const m = String(text || '').match(/(\d+)/);
+    return m ? Number(m[1]) : null;
+  };
+
+  let value = null;
+
+  if (field === 'email') value = extractEmail(raw);
+  else if (field === 'rol') value = extractRole(raw);
+  else if (field === 'stage') value = extractStage(raw) || raw;
+  else if (field === 'lead_id') value = extractId(raw, 'lead') || extractId(raw, 'cliente') || numberFromText(raw);
+  else if (field === 'task_id') value = extractId(raw, 'tarea') || numberFromText(raw);
+  else if (field === 'producto_id') value = extractId(raw, 'producto') || numberFromText(raw);
+  else if (field === 'almacen_id') value = extractWarehouseId(raw, 'almacen') || extractWarehouseId(raw, 'deposito') || numberFromText(raw);
+  else if (field === 'almacen_origen') value = extractWarehouseId(raw, 'origen') || extractWarehouseId(raw, 'almacen') || numberFromText(raw);
+  else if (field === 'almacen_destino') value = extractWarehouseId(raw, 'destino') || extractWarehouseId(raw, 'almacen') || numberFromText(raw);
+  else if (field === 'cantidad') value = extractQuantity(raw);
+  else if (field === 'nombre') {
+    if (toolName === 'crm.create_client') value = extractClientName(raw);
+    else if (toolName === 'stock.create_product') value = extractProductName(raw);
+    else value = extractQuoted(raw) || raw;
+  } else if (field === 'nombre_cliente') value = extractClientName(raw);
+  else value = extractQuoted(raw) || raw;
+
+  if (!value) return { ok: false, inputs };
+
+  return { ok: true, inputs: { ...inputs, [field]: value } };
+}
+
 async function handleInfo(intent, context) {
   if (intent.infoType === 'capabilities') {
     return {
@@ -447,7 +548,17 @@ async function handleAction(intent, context) {
 
   const missing = (tool.required || []).filter((field) => !intent.inputs?.[field]);
   if (missing.length > 0) {
-    return { type: 'question', text: missingQuestion(missing[0], tool.name) };
+    const missingField = missing[0];
+    await createPendingQuestion(context.db, {
+      orgId: context.orgId,
+      userId: context.user?.id || null,
+      userEmail: context.user?.email || null,
+      moduleName: tool.module,
+      toolName: tool.name,
+      missingField,
+      inputs: intent.inputs || {},
+    });
+    return { type: 'question', text: missingQuestion(missingField, tool.name) };
   }
 
   if (!canPerform(context.user, tool.action, tool.module)) {
@@ -568,6 +679,24 @@ async function handleConfirmation(confirmToken, context) {
 async function handleChat({ message, confirm_token, context }) {
   if (confirm_token) {
     return handleConfirmation(confirm_token, context);
+  }
+
+  const trimmed = String(message || '').trim();
+  if (trimmed) {
+    const pending = await loadPendingQuestion(context.db, {
+      orgId: context.orgId,
+      userId: context.user?.id || null,
+      userEmail: context.user?.email || null,
+    });
+
+    if (pending) {
+      const applied = applyPendingInput(pending, trimmed);
+      if (!applied.ok) {
+        return { type: 'question', text: missingQuestion(pending.missing_field, pending.tool_name) };
+      }
+      await markQuestionResolved(context.db, pending.id);
+      return handleAction({ type: 'action', toolName: pending.tool_name, inputs: applied.inputs }, context);
+    }
   }
 
   const intent = parseIntent(message, context);
