@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const axios = require('axios');
+const { enqueueEmailOutbox } = require('../../utils/emailOutbox');
 
 function normEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -27,12 +28,13 @@ async function ensureResetTable(db) {
 
 async function sendResetWebhook(payload) {
   const url = process.env.PASSWORD_RESET_WEBHOOK_URL;
-  if (!url) return;
+  if (!url) return false;
   const secret = process.env.PASSWORD_RESET_WEBHOOK_SECRET;
   await axios.post(url, payload, {
     timeout: 8000,
     headers: secret ? { 'X-Webhook-Secret': secret } : undefined,
   });
+  return true;
 }
 
 module.exports = {
@@ -93,17 +95,41 @@ module.exports = {
         )}&org=${encodeURIComponent(String(orgId))}`
       : null;
 
-    await sendResetWebhook({
+    let orgName = null;
+    try {
+      const orgRow = await db.query('SELECT nombre FROM organizaciones WHERE id=$1 LIMIT 1', [orgId]);
+      orgName = orgRow.rows?.[0]?.nombre || null;
+    } catch {}
+
+    const payload = {
       email,
       organizacion_id: orgId,
+      organizacion_nombre: orgName,
       reset_url: resetUrl,
       token,
+      requested_by: context.user?.email || null,
       expires_at: expiresAt.toISOString(),
-    }).catch((err) => {
+    };
+
+    const webhookOk = await sendResetWebhook(payload).catch((err) => {
       if (process.env.NODE_ENV !== 'production') {
         console.error('[reset webhook]', err?.message || err);
       }
+      return false;
     });
+
+    if (!webhookOk) {
+      await enqueueEmailOutbox(db, {
+        organizacion_id: orgId,
+        to_email: email,
+        template: 'password_reset',
+        payload,
+      }).catch((err) => {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[reset outbox]', err?.message || err);
+        }
+      });
+    }
 
     return {
       status: 'ok',

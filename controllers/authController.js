@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { isSuperadminEmail } = require('../config/superadmins');
 const { requireAuth, requireRole } = require('../middlewares/auth');
+const { enqueueEmailOutbox } = require('../utils/emailOutbox');
 
 const { JWT_SECRET } = process.env;
 if (!JWT_SECRET) throw new Error('JWT_SECRET no esta definido en el entorno.');
@@ -66,7 +67,7 @@ async function supportsVetFlags(db) {
     await db.query('SELECT habilita_ficha_mascotas, habilita_recordatorios_vacunas FROM organizacion_perfil LIMIT 1');
     cachedVetFlags = true;
   } catch (e) {
-    if (e?.code === '42703') {
+    if (e?.code === '42703' || e?.code === '42P01') {
       cachedVetFlags = false;
     } else {
       throw e;
@@ -394,6 +395,7 @@ exports.requestPasswordReset = async (req, res) => {
       : null;
 
     // Webhook opcional para enviar email
+    let webhookOk = false;
     if (RESET_WEBHOOK_URL) {
       try {
         await axios.post(
@@ -407,15 +409,34 @@ exports.requestPasswordReset = async (req, res) => {
             expires_at: expiresAt.toISOString(),
           },
           {
-            headers: RESET_WEBHOOK_SECRET ? { "X-Webhook-Secret": RESET_WEBHOOK_SECRET } : undefined,
+            headers: RESET_WEBHOOK_SECRET ? { 'X-Webhook-Secret': RESET_WEBHOOK_SECRET } : undefined,
             timeout: 8000,
           }
         );
+        webhookOk = true;
       } catch (e) {
         if (process.env.NODE_ENV !== 'production') {
           console.error('[password-reset webhook]', e?.message || e);
         }
       }
+    }
+
+    if (!webhookOk) {
+      await enqueueEmailOutbox(req.db, {
+        organizacion_id,
+        to_email: email,
+        template: 'password_reset',
+        payload: {
+          organizacion_nombre: orgName,
+          reset_url: resetUrl,
+          token,
+          expires_at: expiresAt.toISOString(),
+        },
+      }).catch((e) => {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[password-reset outbox]', e?.message || e);
+        }
+      });
     }
 
     return res.json({ ok: true, message: 'Si el email existe, vas a recibir instrucciones.' });

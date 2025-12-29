@@ -24,7 +24,7 @@ async function supportsVetFlags(db) {
     await db.query('SELECT habilita_ficha_mascotas, habilita_recordatorios_vacunas FROM organizacion_perfil LIMIT 1');
     cachedVetFlags = true;
   } catch (e) {
-    if (e?.code === '42703') {
+    if (e?.code === '42703' || e?.code === '42P01') {
       cachedVetFlags = false;
     } else {
       throw e;
@@ -197,10 +197,10 @@ exports.updatePerfilOrganizacion = async (req, res) => {
         ON CONFLICT (organizacion_id)
         DO UPDATE SET
           nombre_publico = EXCLUDED.nombre_publico,
-          logo_url = EXCLUDED.logo_url,
-          brand_color = EXCLUDED.brand_color,
-          idioma = EXCLUDED.idioma,
-          timezone = EXCLUDED.timezone,
+          logo_url = COALESCE(EXCLUDED.logo_url, organizacion_perfil.logo_url),
+          brand_color = COALESCE(EXCLUDED.brand_color, organizacion_perfil.brand_color),
+          idioma = COALESCE(EXCLUDED.idioma, organizacion_perfil.idioma),
+          timezone = COALESCE(EXCLUDED.timezone, organizacion_perfil.timezone),
           area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
           habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
           habilita_ficha_mascotas = COALESCE(EXCLUDED.habilita_ficha_mascotas, organizacion_perfil.habilita_ficha_mascotas),
@@ -227,10 +227,10 @@ exports.updatePerfilOrganizacion = async (req, res) => {
         ON CONFLICT (organizacion_id)
         DO UPDATE SET
           nombre_publico = EXCLUDED.nombre_publico,
-          logo_url = EXCLUDED.logo_url,
-          brand_color = EXCLUDED.brand_color,
-          idioma = EXCLUDED.idioma,
-          timezone = EXCLUDED.timezone,
+          logo_url = COALESCE(EXCLUDED.logo_url, organizacion_perfil.logo_url),
+          brand_color = COALESCE(EXCLUDED.brand_color, organizacion_perfil.brand_color),
+          idioma = COALESCE(EXCLUDED.idioma, organizacion_perfil.idioma),
+          timezone = COALESCE(EXCLUDED.timezone, organizacion_perfil.timezone),
           area_vertical = COALESCE(EXCLUDED.area_vertical, organizacion_perfil.area_vertical),
           habilita_historias_clinicas = COALESCE(EXCLUDED.habilita_historias_clinicas, organizacion_perfil.habilita_historias_clinicas),
           updated_at = NOW()
