@@ -182,6 +182,14 @@ function wantsStockTasks(text) {
   return text.includes('tareas') && text.includes('stock');
 }
 
+function wantsInviteUser(text) {
+  if (text.includes('invitar') || text.includes('invitacion') || text.includes('invita')) return true;
+  if (text.includes('crear usuario') || text.includes('crea usuario')) return true;
+  if (text.includes('crear un usuario') || text.includes('crea un usuario')) return true;
+  if (text.includes('nuevo usuario') || text.includes('alta usuario')) return true;
+  return false;
+}
+
 function safeSummary(value, maxLen = 500) {
   let out = '';
   try {
@@ -404,7 +412,7 @@ function parseIntent(message, context) {
     };
   }
 
-  if (text.includes('invitar') || text.includes('invitacion') || text.includes('invita')) {
+  if (wantsInviteUser(text)) {
     return {
       type: 'action',
       toolName: 'core.invite_user',
