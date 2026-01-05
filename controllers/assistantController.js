@@ -55,6 +55,7 @@ exports.chat = async (req, res) => {
         module: currentModule || 'core',
         route: currentRoute || null,
         response_type: response?.type || null,
+        detail: response?.debug || null,
       },
     });
   } catch (err) {
