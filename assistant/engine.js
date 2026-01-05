@@ -589,7 +589,11 @@ async function handleAction(intent, context) {
     return { type: 'question', text: planned.question || 'Necesito un dato mas.' };
   }
   if (planned.status === 'error') {
-    return { type: 'error', text: planned.message || 'No puedo avanzar con eso.' };
+    return {
+      type: 'error',
+      text: planned.message || 'No puedo avanzar con eso.',
+      debug: planned.debug || undefined,
+    };
   }
 
   const actionInputs = planned.inputs || intent.inputs;
@@ -661,7 +665,11 @@ async function handleConfirmation(confirmToken, context) {
   });
 
   if (exec.status === 'error') {
-    return { type: 'error', text: exec.message || 'No pude completar la accion.' };
+    return {
+      type: 'error',
+      text: exec.message || 'No pude completar la accion.',
+      debug: exec.debug || undefined,
+    };
   }
 
   await markActionExecuted(context.db, row.id);
