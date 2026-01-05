@@ -43,9 +43,10 @@ function extractPhone(text) {
 }
 
 function extractRole(text) {
-  if (/\\bowner\\b/.test(text)) return 'owner';
-  if (/\\badmin\\b/.test(text)) return 'admin';
-  if (/\\buser\\b/.test(text) || /\\busuario\\b/.test(text)) return 'user';
+  const t = String(text || '').toLowerCase();
+  if (/\\bowner\\b/.test(t)) return 'owner';
+  if (/\\badmin\\b/.test(t)) return 'admin';
+  if (/\\buser\\b/.test(t) || /\\busuario\\b/.test(t)) return 'user';
   return null;
 }
 
