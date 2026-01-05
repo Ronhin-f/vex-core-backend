@@ -58,9 +58,25 @@ exports.chat = async (req, res) => {
       },
     });
   } catch (err) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[assistantController/chat]', err);
+    const requestId = buildRequestId(req);
+    console.error('[assistantController/chat]', {
+      request_id: requestId,
+      error: err?.message || err,
+      stack: err?.stack || null,
+    });
+
+    const debugEnabled =
+      String(process.env.ASSISTANT_DEBUG || '') === '1' ||
+      String(req.headers['x-assistant-debug'] || '') === '1';
+
+    if (!debugEnabled) {
+      return res.status(500).json({ type: 'error', text: 'Error interno del asistente' });
     }
-    return res.status(500).json({ type: 'error', text: 'Error interno del asistente' });
+
+    return res.status(500).json({
+      type: 'error',
+      text: 'Error interno del asistente',
+      debug: { request_id: requestId },
+    });
   }
 };

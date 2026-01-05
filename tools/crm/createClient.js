@@ -57,19 +57,31 @@ module.exports = {
       status: 'active',
     };
 
-    const result = await requestJson({
-      baseUrl: cfg.apiBase,
-      path: '/clientes',
-      method: 'POST',
-      data: payload,
-      context,
-    });
+    try {
+      const result = await requestJson({
+        baseUrl: cfg.apiBase,
+        path: '/clientes',
+        method: 'POST',
+        data: payload,
+        context,
+      });
 
-    return {
-      status: 'ok',
-      result: { cliente_id: result?.id || null, nombre: result?.nombre || nombre },
-      message: `Listo. Cliente "${nombre}" creado.`,
-      deep_link: cfg.feBase ? joinUrl(cfg.feBase, '/clientes') : null,
-    };
+      return {
+        status: 'ok',
+        result: { cliente_id: result?.id || null, nombre: result?.nombre || nombre },
+        message: `Listo. Cliente "${nombre}" creado.`,
+        deep_link: cfg.feBase ? joinUrl(cfg.feBase, '/clientes') : null,
+      };
+    } catch (err) {
+      const status = err?.status || null;
+      const data = err?.data || null;
+      const base = status ? `No pude crear el cliente. (HTTP ${status})` : 'No pude crear el cliente.';
+      const debugEnabled = String(process.env.ASSISTANT_DEBUG || '') === '1';
+      return {
+        status: 'error',
+        message: base,
+        debug: debugEnabled ? { status, data } : undefined,
+      };
+    }
   },
 };
