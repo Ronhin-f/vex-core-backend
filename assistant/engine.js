@@ -494,10 +494,10 @@ function applyPendingInput(pending, message) {
   else if (field === 'almacen_destino') value = extractWarehouseId(raw, 'destino') || extractWarehouseId(raw, 'almacen') || numberFromText(raw);
   else if (field === 'cantidad') value = extractQuantity(raw);
   else if (field === 'nombre') {
-    if (toolName === 'crm.create_client') value = extractClientName(raw);
-    else if (toolName === 'stock.create_product') value = extractProductName(raw);
+    if (toolName === 'crm.create_client') value = extractClientName(raw) || raw;
+    else if (toolName === 'stock.create_product') value = extractProductName(raw) || raw;
     else value = extractQuoted(raw) || raw;
-  } else if (field === 'nombre_cliente') value = extractClientName(raw);
+  } else if (field === 'nombre_cliente') value = extractClientName(raw) || raw;
   else value = extractQuoted(raw) || raw;
 
   if (!value) return { ok: false, inputs };
