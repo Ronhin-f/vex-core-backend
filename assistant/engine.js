@@ -279,7 +279,7 @@ async function loadPendingQuestion(db, data) {
         )
       ORDER BY created_at DESC
       LIMIT 1`,
-    [orgId, userEmail || '', userId || '']
+    [orgId, userEmail || null, userId || null]
   );
 
   const row = rows[0] || null;
@@ -720,3 +720,4 @@ async function handleChat({ message, confirm_token, context }) {
 }
 
 module.exports = { handleChat };
+
