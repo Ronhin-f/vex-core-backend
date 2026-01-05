@@ -73,14 +73,16 @@ module.exports = {
         deep_link: cfg.feBase ? joinUrl(cfg.feBase, '/clientes') : null,
       };
     } catch (err) {
-      const status = err?.status || null;
-      const data = err?.data || null;
+      const status = err?.status || err?.response?.status || null;
+      const data = err?.data || err?.response?.data || null;
+      const code = err?.code || null;
+      const message = err?.message || null;
       const base = status ? `No pude crear el cliente. (HTTP ${status})` : 'No pude crear el cliente.';
       const debugEnabled = String(process.env.ASSISTANT_DEBUG || '') === '1';
       return {
         status: 'error',
         message: base,
-        debug: debugEnabled ? { status, data } : undefined,
+        debug: debugEnabled ? { status, data, code, message } : undefined,
       };
     }
   },
