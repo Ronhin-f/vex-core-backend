@@ -1,4 +1,3 @@
-// controllers/modulosController.js
 const MOD_DEBUG = process.env.MODULOS_DEBUG === '1';
 const dbg = (...a) => MOD_DEBUG && console.log('[MODULOS]', ...a);
 
@@ -6,6 +5,22 @@ const ALLOWED = new Set(['crm', 'stock', 'flows']); // modulos soportados
 
 function normName(s = '') {
   return String(s).trim().toLowerCase();
+}
+
+function parseConfigValue(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      if (/^https?:\/\//i.test(raw)) return { api_base: raw };
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
@@ -26,14 +41,13 @@ function rowsToObj(rows = []) {
 /**
  * GET /modulos
  * Debe responder un OBJETO PLANO { crm, stock, flows }.
- * Si no hay org, devolvemos { crm:false, stock:false, flows:false } (no 401).
  */
 exports.getModulos = async (req, res) => {
   try {
     const orgId = req.user?.organizacion_id;
     if (!orgId) {
-      dbg('getModulos: user sin organizacion_id -> {crm:false,stock:false,flows:false}');
-      return res.json({ crm: false, stock: false, flows: false });
+      dbg('getModulos: user sin organizacion_id');
+      return res.status(400).json({ error: 'Falta organizacion_id en el token' });
     }
 
     const { rows } = await req.db.query(
@@ -67,7 +81,7 @@ exports.getModuloByNombre = async (req, res) => {
       return res.status(400).json({ error: 'Modulo invalido' });
     }
 
-    if (!orgId) return res.json({ nombre, habilitado: false });
+    if (!orgId) return res.status(400).json({ error: 'Falta organizacion_id en el token' });
 
     const { rows } = await req.db.query(
       `SELECT habilitado
@@ -188,9 +202,10 @@ exports.getModuloConfig = async (req, res) => {
       [nombre]
     );
 
-    const cfg = rows?.[0]?.value || null;
+    const raw = rows?.[0]?.value || null;
+    const cfg = parseConfigValue(raw);
     if (!cfg) {
-      dbg('getModuloConfig: config_not_found', { nombre });
+      dbg('getModuloConfig: config_not_found_or_invalid', { nombre });
       return res.status(404).json({ ok: false, error: 'config_not_found', nombre });
     }
 

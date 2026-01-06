@@ -1,14 +1,17 @@
-// routes/authRoutes.js
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const authController = require('../controllers/authController');
 
+const LOGIN_DEBUG = process.env.LOGIN_DEBUG === '1' || process.env.AUTH_DEBUG === '1';
+
 // Log basico (no loguea passwords)
 const logLogin = (req, _res, next) => {
   try {
-    const email = String(req.body?.email || '').toLowerCase();
-    console.log('[LOGIN_DEBUG] >> /auth/login email:', email);
+    if (LOGIN_DEBUG) {
+      const email = String(req.body?.email || '').toLowerCase();
+      console.log('[LOGIN_DEBUG] >> /auth/login email:', email);
+    }
   } catch {}
   next();
 };
@@ -42,7 +45,7 @@ const resetRequestLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => `${req.ip}|${String(req.body?.email || '').toLowerCase()}`,
-  message: { ok: false, error: 'Demasiadas solicitudes, probá más tarde' },
+  message: { ok: false, error: 'Demasiadas solicitudes, proba mas tarde' },
 });
 
 const resetConfirmLimiter = rateLimit({
@@ -51,7 +54,7 @@ const resetConfirmLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => `${req.ip}|${String(req.body?.email || '').toLowerCase()}`,
-  message: { ok: false, error: 'Demasiados intentos, probá más tarde' },
+  message: { ok: false, error: 'Demasiados intentos, proba mas tarde' },
 });
 
 router.post('/login', loginLimiter, logLogin, authController.login);

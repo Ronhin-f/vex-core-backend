@@ -1,9 +1,8 @@
-// routes/modulosRoutes.js
 const express = require('express');
 const router = express.Router();
 
 // Middlewares con bypass superadmin
-const { requireAuth, requireRole } = require('../controllers/authController');
+const { requireAuth, requireRole } = require('../middlewares/auth');
 const modulos = require('../controllers/modulosController');
 
 // Debug opcional
@@ -17,10 +16,10 @@ if (DBG) {
   console.info('[ROUTES/modulos] typeof modulos.getConfig =', typeof modulos.getModuloConfig);
 }
 
-// Lista de módulos (obj plano {crm,stock,flows})
+// Lista de modulos (obj plano {crm,stock,flows})
 router.get('/', requireAuth, modulos.getMisModulos);
 
-// Config de módulo (flows | crm | stock) -> { fe_url, api_base, ... }
+// Config de modulo (flows | crm | stock) -> { fe_url, api_base, ... }
 router.get('/:nombre/config', requireAuth, modulos.getModuloConfig);
 
 // Estado puntual

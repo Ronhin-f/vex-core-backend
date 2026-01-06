@@ -21,7 +21,7 @@ const { introspect } = require('./controllers/authController');
 const pool = require('./utils/db');
 
 if (!process.env.JWT_SECRET) {
-  throw new Error('Falta la variable JWT_SECRET en el entorno de ejecución.');
+  throw new Error('Falta la variable JWT_SECRET en el entorno de ejecucion.');
 }
 
 const PORT = process.env.PORT || 8080;
@@ -30,7 +30,7 @@ const app = express();
 // Aceptamos proxy inverso (Railway) para IP real y cookies seguras
 app.set('trust proxy', 1);
 
-// Evitamos 304/ETag para que Axios no reciba respuestas vacías cacheadas
+// Evitamos 304/ETag para que Axios no reciba respuestas vacias cacheadas
 app.disable('etag');
 app.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -93,7 +93,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 /* ============================================
-   Inyección de pool (compat req.db y app.locals)
+   Inyeccion de pool (compat req.db y app.locals)
    ============================================ */
 app.use((req, _res, next) => {
   req.db = pool;
@@ -106,7 +106,7 @@ app.get('/', (_req, res) => {
   res.send('Vex Core API online');
 });
 
-// Health estándar
+// Health estandar
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -121,7 +121,7 @@ app.use('/auth', authRoutes); // alias legacy
 // Failsafe directo por si el router no cargara
 app.get('/api/auth/introspect', introspect);
 
-// Otros módulos
+// Otros modulos
 app.use('/api/modulos', modulosRoutes);
 app.use('/modulos', modulosRoutes); // alias legacy
 
@@ -155,5 +155,5 @@ app.use((err, _req, res, _next) => {
 
 /* ============ Arranque ============ */
 app.listen(PORT, () => {
-  console.log(`🚀 Vex Core backend corriendo en http://localhost:${PORT}`);
+  console.log(`Vex Core backend corriendo en http://localhost:${PORT}`);
 });

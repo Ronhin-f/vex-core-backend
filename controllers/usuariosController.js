@@ -1,8 +1,11 @@
-// controllers/usuariosController.js
 const bcrypt = require('bcryptjs');
 
 function normEmail(s = '') {
   return String(s).trim().toLowerCase();
+}
+
+function isStrongPassword(pw = '') {
+  return pw.length >= 12 && /[A-Za-z]/.test(pw) && /\d/.test(pw);
 }
 
 exports.getUsuarios = async (req, res) => {
@@ -29,13 +32,13 @@ exports.crearUsuario = async (req, res) => {
     const rolesValidos = ['admin', 'user'];
 
     if (!email || !password || typeof nombre !== 'string' || !rolesValidos.includes(rol)) {
-      return res.status(400).json({ error: 'Datos inválidos o rol no permitido' });
+      return res.status(400).json({ error: 'Datos invalidos o rol no permitido' });
     }
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({ error: 'La contrasena debe tener al menos 12 caracteres, con letras y numeros' });
     }
 
-    // Solo owner puede crear usuarios en su organización
+    // Solo owner puede crear usuarios en su organizacion
     const creador = await req.db.query(
       'SELECT rol FROM usuarios WHERE email = $1 AND organizacion_id = $2',
       [req.usuario_email, req.organizacion_id]
@@ -53,7 +56,7 @@ exports.crearUsuario = async (req, res) => {
       [emailN, req.organizacion_id]
     );
     if (existe.rowCount) {
-      return res.status(409).json({ error: 'Ese email ya está registrado en esta organización' });
+      return res.status(409).json({ error: 'Ese email ya esta registrado en esta organizacion' });
     }
 
     const hash = await bcrypt.hash(password, 10);
@@ -81,12 +84,12 @@ exports.getUsuarioActual = async (req, res) => {
       [req.usuario_email, req.organizacion_id]
     );
     const usuario = result.rows[0];
-    if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
+    if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
     res.json({ usuario });
   } catch (err) {
-    if (process.env.NODE_ENV !== "production") {
-      console.error("[usuariosController/getUsuarioActual]", err);
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[usuariosController/getUsuarioActual]', err);
     }
-    res.status(500).json({ error: "Error al obtener usuario actual" });
+    res.status(500).json({ error: 'Error al obtener usuario actual' });
   }
 };
