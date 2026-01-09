@@ -13,7 +13,7 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET no esta definido en el entorno.');
 const AUTH_DEBUG = process.env.AUTH_DEBUG === '1';
 const JWT_ISSUER = process.env.JWT_ISSUER || 'vex-core';
 const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'vex-core-clients';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '20m';
 const JWT_OPTS = { issuer: JWT_ISSUER, audience: JWT_AUDIENCE };
 const JWT_VERIFY_OPTIONS = { ...JWT_OPTS, algorithms: ['HS256'] };
 const RESET_TTL_MIN = Number(process.env.PASSWORD_RESET_TTL_MIN || 60);
@@ -28,6 +28,7 @@ if (process.env.AUTH_ALLOW_PLAIN === '1') {
 
 function signToken(payload) {
   const jti = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex');
+  // TODO(core-security): migrar a cookies httpOnly + rotacion de tokens (etapa 2)
   return jwt.sign({ ...payload, jti }, JWT_SECRET, { ...JWT_OPTS, expiresIn: JWT_EXPIRES_IN });
 }
 
@@ -37,6 +38,9 @@ function extractDomain(email = '') {
 }
 function normEmail(s = '') {
   return String(s).trim().toLowerCase();
+}
+function isValidEmail(email = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email));
 }
 function looksLikeBcryptHash(s) {
   return typeof s === 'string' && /^\$2[aby]\$\d{2}\$/.test(s);
@@ -194,7 +198,7 @@ exports.login = async (req, res) => {
 
     dbg('LOGIN >> email:', email, 'org:', organizacion_id || '(none)');
 
-    if (!email || !password) {
+    if (!email || !isValidEmail(email) || !password) {
       warn('LOGIN missing credentials', { hasEmail: !!email, hasPassword: !!password });
       return res.status(400).json({ ok: false, error: 'Email y contrasena son requeridos' });
     }
@@ -330,7 +334,7 @@ exports.requestPasswordReset = async (req, res) => {
       organizacion_id = Number.isFinite(n) ? n : organizacion_id;
     }
 
-    if (!email) {
+    if (!email || !isValidEmail(email)) {
       return res.status(400).json({ ok: false, error: 'Email requerido' });
     }
 
@@ -461,7 +465,7 @@ exports.confirmPasswordReset = async (req, res) => {
       organizacion_id = Number.isFinite(n) ? n : organizacion_id;
     }
 
-    if (!email || !token || !new_password) {
+    if (!email || !isValidEmail(email) || !token || !new_password) {
       return res.status(400).json({ ok: false, error: 'Faltan parametros' });
     }
     if (!isStrongPassword(new_password)) {
@@ -584,7 +588,7 @@ exports.register = async (req, res) => {
     email = normEmail(email);
     nombre = String(nombre || '').trim();
 
-    if (!email || !password || !nombre) {
+    if (!email || !isValidEmail(email) || !password || !nombre) {
       warn('REGISTER missing fields', { hasEmail: !!email, hasPassword: !!password, hasNombre: !!nombre });
       return res.status(400).json({ ok: false, error: 'Faltan datos: nombre, email y contrasena son obligatorios' });
     }

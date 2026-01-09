@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const crypto = require('crypto');
+const { sanitizeHeaders, sanitizeBody } = require('./utils/sanitize');
 
 // Rutas
 const authRoutes = require('./routes/authRoutes');
@@ -29,6 +30,7 @@ const app = express();
 
 // Aceptamos proxy inverso (Railway) para IP real y cookies seguras
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
 // Evitamos 304/ETag para que Axios no reciba respuestas vacias cacheadas
 app.disable('etag');
@@ -42,24 +44,48 @@ app.use((req, res, next) => {
 /* ================================
    CORS (arriba y con Vary: Origin)
    ================================ */
-const ALLOWED_ORIGINS = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'https://vex-core-frontend.vercel.app',
-  'https://vex-core-landing.vercel.app',
-  'https://vex-crm-frontend.vercel.app',
-  'https://vex-stock-frontend.vercel.app',
+const PROD_ORIGINS = [
+  'https://vectorargentina.com',
+  'https://www.vectorargentina.com',
 ];
+
+const EXTRA_ORIGINS = String(process.env.CORS_EXTRA_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const ALLOW_VERCEL_PREVIEWS = process.env.CORS_ALLOW_VERCEL_PREVIEWS === '1';
+const VERCEL_PREVIEW_REGEX = new RegExp(
+  process.env.CORS_VERCEL_PREVIEW_REGEX || '^https://.*\\.vercel\\.app$'
+);
+
+const ALLOW_LOCALHOST =
+  process.env.NODE_ENV !== 'production' || process.env.CORS_ALLOW_LOCALHOST === '1';
+
+const LOCAL_ORIGINS = ['http://localhost:3000', 'http://localhost:5173'];
+
+const ALLOWED_ORIGINS = new Set([
+  ...PROD_ORIGINS,
+  ...EXTRA_ORIGINS,
+  ...(ALLOW_LOCALHOST ? LOCAL_ORIGINS : []),
+]);
+
+function isOriginAllowed(origin) {
+  if (!origin) return true; // curl/postman/servers
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  if (ALLOW_VERCEL_PREVIEWS && VERCEL_PREVIEW_REGEX.test(origin)) return true;
+  return false;
+}
 
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin) return callback(null, true); // curl/postman/servers
-    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    if (isOriginAllowed(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS: ' + origin), false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Assistant-Debug'],
+  optionsSuccessStatus: 204,
 };
 
 app.use((req, res, next) => {
@@ -72,11 +98,19 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 // Headers de hardening (CSP deshabilitado para compat con FE)
-app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-  crossOriginEmbedderPolicy: false,
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    hsts:
+      process.env.NODE_ENV === 'production'
+        ? { maxAge: 15552000, includeSubDomains: true, preload: true }
+        : false,
+  })
+);
 
 // x-request-id para trazabilidad
 app.use((req, res, next) => {
@@ -89,8 +123,18 @@ app.use((req, res, next) => {
 /* ================================
    Parsers
    ================================ */
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
+const jsonParserDefault = express.json({ limit: '200kb' });
+const jsonParserAssistant = express.json({ limit: process.env.ASSISTANT_BODY_LIMIT || '1mb' });
+
+app.use((req, res, next) => {
+  const p = req.path || '';
+  if (p.startsWith('/api/assistant/chat') || p.startsWith('/assistant/chat')) {
+    return jsonParserAssistant(req, res, next);
+  }
+  return jsonParserDefault(req, res, next);
+});
+
+app.use(express.urlencoded({ extended: true, limit: '200kb' }));
 
 /* ============================================
    Inyeccion de pool (compat req.db y app.locals)
@@ -148,7 +192,16 @@ app.use((req, res) => {
 /* ======= Manejador de errores ====== */
 app.use((err, _req, res, _next) => {
   if (process.env.NODE_ENV !== 'production') {
-    console.error('[UNHANDLED ERROR]', err);
+    const safeReq = _req
+      ? {
+          method: _req.method,
+          path: _req.path,
+          request_id: _req.id,
+          headers: sanitizeHeaders(_req.headers),
+          body: sanitizeBody(_req.body),
+        }
+      : null;
+    console.error('[UNHANDLED ERROR]', { error: err?.message || err, req: safeReq });
   }
   res.status(err.status || 500).json({ error: err.message || 'Error interno del servidor' });
 });
